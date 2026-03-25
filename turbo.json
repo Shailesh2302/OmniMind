@@ -1,0 +1,36 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "tui",
+  "globalEnv": ["DATABASE_URL"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build", "^db:generate"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+    },
+    "lint": {
+      "dependsOn": ["^lint"]
+    },
+    "check-types": {
+      "dependsOn": ["^check-types"]
+    },
+    "dev": {
+      "dependsOn": ["@repo/db#build"],
+      "cache": false,
+      "persistent": true
+    },
+    "db:generate": {
+      "cache": false,
+      "env": ["DATABASE_URL"]
+    },
+    "db:migrate": {
+      "cache": false,
+      "persistent": true,
+      "env": ["DATABASE_URL"]
+    },
+    "db:deploy": {
+      "cache": false,
+      "env": ["DATABASE_URL"]
+    }
+  }
+}
