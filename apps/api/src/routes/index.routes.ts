@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
+import path from 'path';
 import { prisma } from '../config/db.js';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import { config } from '../config/env.js';
@@ -45,7 +46,7 @@ router.post(
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             file_id: file.id,
-            file_path: file.path,
+            file_path: path.resolve(file.path),
             mime_type: file.mimeType,
             user_id: req.user!.userId,
           }),

@@ -11,6 +11,7 @@ from app.core.logger import app_logger
 from app.schemas.transcription import TranscriptionRequest, TranscriptionResponse
 from app.services.whisper_service import whisper_service, TranscriptionResult
 from app.services.audio_extract import audio_extractor
+from app.api.routes.documents import validate_readable_path, MAX_UPLOAD_SIZE
 
 router = APIRouter(tags=["transcription"])
 
@@ -30,11 +31,13 @@ async def transcribe_audio(
     api_key: API_KEY_DEP = None,
 ) -> TranscriptionResponse:
     try:
+        content = await file.read()
+        if len(content) > MAX_UPLOAD_SIZE:
+            raise HTTPException(status_code=413, detail=f"File too large (max {MAX_UPLOAD_SIZE // (1024 * 1024)} MB)")
         with tempfile.NamedTemporaryFile(
             delete=False,
-            suffix=os.path.splitext(file.filename)[1]
+            suffix=os.path.splitext(file.filename or "")[1]
         ) as tmp_file:
-            content = await file.read()
             tmp_file.write(content)
             tmp_path = tmp_file.name
 
@@ -65,7 +68,7 @@ async def transcribe_audio(
 
     except Exception as e:
         app_logger.error(f"Transcription error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to transcribe audio")
 
 
 @router.post("/transcription/from-video", response_model=VideoTranscriptionResponse)
@@ -75,11 +78,13 @@ async def transcribe_video(
     api_key: API_KEY_DEP = None,
 ) -> VideoTranscriptionResponse:
     try:
+        content = await file.read()
+        if len(content) > MAX_UPLOAD_SIZE:
+            raise HTTPException(status_code=413, detail=f"File too large (max {MAX_UPLOAD_SIZE // (1024 * 1024)} MB)")
         with tempfile.NamedTemporaryFile(
             delete=False,
-            suffix=os.path.splitext(file.filename)[1]
+            suffix=os.path.splitext(file.filename or "")[1]
         ) as tmp_file:
-            content = await file.read()
             tmp_file.write(content)
             video_path = tmp_file.name
 
@@ -117,7 +122,7 @@ async def transcribe_video(
 
     except Exception as e:
         app_logger.error(f"Video transcription error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to transcribe video")
 
 
 @router.post("/transcription/from-url", response_model=TranscriptionResponse)
@@ -125,9 +130,10 @@ async def transcribe_from_url(
     request: TranscriptionRequest,
     api_key: API_KEY_DEP = None,
 ) -> TranscriptionResponse:
+    safe_path = validate_readable_path(request.audio_path)
     try:
         result: TranscriptionResult = await whisper_service.transcribe(
-            audio_path=request.audio_path,
+            audio_path=safe_path,
             language=request.language,
         )
 
@@ -147,7 +153,8 @@ async def transcribe_from_url(
             segments=segments,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        app_logger.error(f"Transcription error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to transcribe audio")
 
 
 @router.get("/transcription/models")

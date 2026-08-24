@@ -83,7 +83,16 @@ export function AskAboutVideo({
         }),
       });
 
-      if (!response.ok) throw new Error("Failed to get response");
+      if (!response.ok) {
+        let detail = `Request failed (${response.status})`;
+        try {
+          const body = await response.json();
+          if (body?.error) detail = body.error;
+        } catch {
+          // ignore body parse issues
+        }
+        throw new Error(detail);
+      }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -114,12 +123,16 @@ export function AskAboutVideo({
       setStreamingContent("");
     } catch (error) {
       console.error("Error asking question:", error);
+      const detail =
+        error instanceof Error && error.message
+          ? error.message
+          : "Sorry, I encountered an error while processing your question.";
       setMessages((prev) => [
         ...prev,
         {
           id: (Date.now() + 1).toString(),
           role: "assistant",
-          content: "Sorry, I encountered an error while processing your question.",
+          content: `⚠️ ${detail}`,
         },
       ]);
     } finally {

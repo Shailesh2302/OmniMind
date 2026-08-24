@@ -52,6 +52,8 @@ impl ProcessingService {
             output_path: Some(format!("/tmp/aether/clips/{}.mp4", clip_id)),
             status: "pending".to_string(),
             parameters: Some(JobParameters {
+                user_id: None,
+                mime_type: None,
                 start_time: Some(start_time),
                 end_time: Some(start_time + duration),
                 duration: Some(duration),

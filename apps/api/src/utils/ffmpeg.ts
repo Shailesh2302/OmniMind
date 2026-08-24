@@ -1,6 +1,5 @@
 import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
-import path from 'path';
 import { logger } from '../config/logger.js';
 
 export interface VideoMetadata {
@@ -39,13 +38,16 @@ export async function getVideoMetadata(filePath: string): Promise<VideoMetadata>
         const videoStream = data.streams.find((s: { codec_type: string }) => s.codec_type === 'video');
         const format = data.format;
 
+        const [num, den] = String(videoStream?.r_frame_rate || '0/1').split('/').map(Number);
+        const fps = den ? num / den : 0;
+
         resolve({
           duration: parseFloat(format.duration || '0'),
           width: videoStream?.width || 0,
           height: videoStream?.height || 0,
           codec: videoStream?.codec_name || 'unknown',
           bitrate: parseInt(format.bit_rate || '0', 10),
-          fps: eval(videoStream?.r_frame_rate || '0') || 0,
+          fps,
         });
       } catch (error) {
         reject(error);
@@ -112,27 +114,53 @@ export async function trimVideo(
   startTime: number,
   endTime: number
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const duration = endTime - startTime;
-    const ffmpeg = spawn('ffmpeg', [
-      '-y',
-      '-ss', startTime.toString(),
-      '-t', duration.toString(),
-      '-i', videoPath,
-      '-c', 'copy',
-      outputPath,
-    ]);
+  const duration = Math.max(endTime - startTime, 0.5);
 
-    ffmpeg.on('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(`ffmpeg exited with code ${code}`));
-        return;
-      }
-      resolve(outputPath);
+  const run = (args: string[]) =>
+    new Promise<boolean>((resolve) => {
+      const ffmpeg = spawn('ffmpeg', args);
+      let stderr = '';
+      ffmpeg.stderr.on('data', (d) => {
+        stderr += d;
+      });
+      ffmpeg.on('close', (code) => resolve(code === 0));
+      ffmpeg.on('error', () => resolve(false));
+      void stderr;
     });
 
-    ffmpeg.on('error', reject);
-  });
+  // Attempt 1: lossless stream copy (fast path).
+  const copied = await run([
+    '-y',
+    '-ss', String(startTime),
+    '-t', String(duration),
+    '-i', videoPath,
+    '-c', 'copy',
+    '-movflags', '+faststart',
+    outputPath,
+  ]);
+  if (copied) return outputPath;
+
+  // Attempt 2: professional codecs (DNxHD/ProRes etc.) or odd containers
+  // cannot always be muxed into MP4 - re-encode to universally playable
+  // H.264/AAC instead of failing.
+  logger.info({ videoPath }, 'Stream copy failed, re-encoding clip');
+  const encoded = await run([
+    '-y',
+    '-ss', String(startTime),
+    '-t', String(duration),
+    '-i', videoPath,
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-crf', '23',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    '-movflags', '+faststart',
+    outputPath,
+  ]);
+  if (!encoded) {
+    throw new Error(`ffmpeg could not trim video (${videoPath})`);
+  }
+  return outputPath;
 }
 
 export async function getVideoDuration(filePath: string): Promise<number> {

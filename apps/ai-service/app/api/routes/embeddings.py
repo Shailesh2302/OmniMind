@@ -1,14 +1,14 @@
-from typing import List, Union
+from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from app.api.dependencies import API_KEY_DEP
+from app.core.logger import app_logger
 from app.schemas.embeddings import EmbeddingRequest, EmbeddingResponse, BatchEmbeddingRequest
-from app.services.embedding_service import EmbeddingService
+from app.services.embedding_service import embedding_service
 
 router = APIRouter(tags=["embeddings"])
-
-embedding_service = EmbeddingService()
 
 
 @router.post("/embeddings", response_model=EmbeddingResponse)
@@ -25,7 +25,8 @@ async def generate_embedding(
             dimensions=len(embedding),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        app_logger.error(f"Embedding failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate embedding")
 
 
 @router.post("/embeddings/batch", response_model=List[EmbeddingResponse])
@@ -34,7 +35,7 @@ async def generate_batch_embeddings(
     api_key: API_KEY_DEP,
 ) -> List[EmbeddingResponse]:
     try:
-        embeddings = await embedding_service.embed_texts(request.texts)
+        embeddings = await embedding_service.embedTexts(request.texts)
 
         return [
             EmbeddingResponse(
@@ -45,39 +46,58 @@ async def generate_batch_embeddings(
             for emb in embeddings
         ]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        app_logger.error(f"Batch embedding failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate embeddings")
 
 
-@router.post("/embeddings/documents")
-async def embed_documents(
-    request: EmbeddingRequest,
+class DocumentEmbeddingRequest(BaseModel):
+    file_path: str
+
+
+class DocumentEmbeddingResponse(BaseModel):
+    chunks: int
+    embeddings: List[List[float]]
+    model: str
+    dimensions: int
+
+
+@router.post("/embeddings/documents", response_model=DocumentEmbeddingResponse)
+async def embed_document_file(
+    request: DocumentEmbeddingRequest,
     api_key: API_KEY_DEP,
-) -> EmbeddingResponse:
+) -> DocumentEmbeddingResponse:
+    """Embed all chunks of a document. Returns every chunk's embedding."""
+    from app.api.routes.documents import validate_readable_path
+
+    safe_path = validate_readable_path(request.file_path)
+
     try:
         from app.loaders import pdf_loader, docx_loader, excel_loader
 
-        chunks = []
+        if safe_path.endswith(".pdf"):
+            chunks = await pdf_loader.load_file(safe_path)
+        elif safe_path.endswith((".doc", ".docx")):
+            chunks = await docx_loader.load_file(safe_path)
+        elif safe_path.endswith((".xls", ".xlsx")):
+            chunks = await excel_loader.load_file(safe_path)
+        else:
+            from app.services.chunker import chunker
+            with open(safe_path, "r", encoding="utf-8", errors="ignore") as f:
+                chunks = chunker.chunk_text(f.read())
 
-        if request.text.endswith(".pdf"):
-            chunks = await pdf_loader.load_file(request.text)
-        elif request.text.endswith((".doc", ".docx")):
-            chunks = await docx_loader.load_file(request.text)
-        elif request.text.endswith((".xls", ".xlsx")):
-            chunks = await excel_loader.load_file(request.text)
+        if not chunks:
+            raise HTTPException(status_code=422, detail="No content extracted from document")
 
-        if chunks:
-            embeddings = await embedding_service.embed_texts(chunks)
-            return EmbeddingResponse(
-                embedding=embeddings[0],
-                model=embedding_service.model_name,
-                dimensions=len(embeddings[0]),
-            )
+        embeddings = await embedding_service.embed_documents(chunks)
 
-        embedding = await embedding_service.embed_text(request.text)
-        return EmbeddingResponse(
-            embedding=embedding,
+        return DocumentEmbeddingResponse(
+            chunks=len(chunks),
+            embeddings=embeddings,
             model=embedding_service.model_name,
-            dimensions=len(embedding),
+            dimensions=len(embeddings[0]) if embeddings else 0,
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        app_logger.error(f"Document embedding failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to embed document")

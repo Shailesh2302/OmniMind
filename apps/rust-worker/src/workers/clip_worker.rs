@@ -54,8 +54,13 @@ impl ClipWorker {
             .text("fileId", file_id.to_string())
             .part("file", part);
 
+        let url = format!(
+            "{}/api/clips/upload",
+            self.app_state.config.api_url.trim_end_matches('/')
+        );
         let response = self.http_client
-            .post("http://localhost:3001/api/clips/upload")
+            .post(url)
+            .header("x-service-key", &self.app_state.config.service_key)
             .multipart(form)
             .send()
             .await?;
@@ -88,8 +93,13 @@ impl ClipWorker {
             "duration": duration,
         });
 
+        let url = format!(
+            "{}/api/clips",
+            self.app_state.config.api_url.trim_end_matches('/')
+        );
         let response = self.http_client
-            .post("http://localhost:3001/api/clips")
+            .post(url)
+            .header("x-service-key", &self.app_state.config.service_key)
             .json(&payload)
             .send()
             .await?;

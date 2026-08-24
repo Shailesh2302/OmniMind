@@ -13,6 +13,7 @@ class EmbeddingService:
     def __init__(self):
         self._client: Optional[AsyncOpenAI] = None
         self.model = settings.NVIDIA_EMBEDDING_MODEL
+        self.dimension = settings.EMBEDDING_DIMENSION
         app_logger.info(f"Embedding Service initialized with model: {self.model}")
 
     @property
@@ -73,7 +74,7 @@ class EmbeddingService:
                         all_embeddings.append(embedding)
                     except Exception as inner_e:
                         app_logger.error(f"Failed to embed document: {inner_e}")
-                        all_embeddings.append([0.0] * 4096)
+                        all_embeddings.append([0.0] * self.dimension)
 
         return all_embeddings
 

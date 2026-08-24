@@ -143,7 +143,7 @@ class ProcessingPipeline:
 
         exists = await vector_service.collection_exists(collection)
         if not exists:
-            await vector_service.create_collection(collection, 4096)
+            await vector_service.create_collection(collection, settings.EMBEDDING_DIMENSION)
 
         embeddings = await embedding_service.embed_documents(chunks)
 

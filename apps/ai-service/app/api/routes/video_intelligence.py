@@ -1,4 +1,5 @@
 from typing import Optional, List, Dict, Any
+import json
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Query
 from app.api.dependencies import API_KEY_DEP
@@ -360,21 +361,34 @@ async def generate_video_summary(
             limit=10,
         )
         
-        prompt = f"""Analyze the following video content and generate a comprehensive summary.
+        if not rag_context.context.strip():
+            return VideoSummaryResponse(
+                file_id=request.file_id,
+                summary="No transcript available for this video yet. Upload a video with an audio track and wait for processing to complete.",
+                topics=[],
+                key_themes=[],
+                duration_sec=0,
+            )
 
-CONTENT:
+        prompt = f"""You are a professional video analyst. Analyze the transcript below and produce a genuinely useful summary.
+
+TRANSCRIPT (may be in any language; write your answer in English):
 {rag_context.context}
 
-Return a JSON with:
+Respond with ONLY a JSON object, no markdown fences, in this exact shape:
 {{
-  "summary": "A detailed 3-4 sentence summary of the video content",
-  "topics": ["topic1", "topic2", "topic3"],
-  "key_themes": ["theme1", "theme2", "theme3"]
+  "summary": "A detailed 3-5 sentence summary describing what happens in the video, who speaks, and what they say",
+  "topics": ["3-6 concrete topics discussed"],
+  "key_themes": ["2-4 overarching themes"]
 }}
-"""
+
+Rules:
+- Base everything strictly on the transcript.
+- If the transcript is short or low-quality, say so explicitly inside the summary instead of answering vaguely.
+- Never answer with placeholders like "..." - always write full sentences."""
 
         response = await llm_service.generate_response(
-            query="Summarize this video",
+            query="Generate the JSON summary now.",
             context=rag_context.context,
             system_prompt=prompt,
         )
@@ -465,15 +479,12 @@ Provide a helpful, accurate answer. If the context doesn't contain enough inform
                 system_prompt=prompt,
             )
             
-            for char in response:
-                yield f"data: {char}\n\n"
-                await asyncio.sleep(0.01)
-            
+            yield f"data: {json.dumps({'content': response})}\n\n"
             yield "data: [DONE]\n\n"
             
         except Exception as e:
             app_logger.error(f"Error in ask about video: {e}")
-            yield f"data: Error: {str(e)}\n\n"
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
     
     return StreamingResponse(
         event_generator(),
@@ -518,20 +529,16 @@ async def get_video_status(
         highlights_generated = 0
         
         if collection_exists:
-            indexed = True
-            progress = 0.7
-            status = "indexed"
-            
-            points = await vector_service.get_collection_points(collection, file_id)
+            points = await vector_service.get_collection_points(collection, file_id, limit=1)
             if points:
                 transcript_ready = True
-                progress = 0.9
+                indexed = True
                 status = "ready"
         
         return VideoStatusResponse(
             file_id=file_id,
-            status=status,
-            progress=progress,
+            status=status if status == "ready" else ("not_indexed" if not collection_exists else "processing"),
+            progress=1.0 if transcript_ready else 0.0,
             transcript_ready=transcript_ready,
             indexed=indexed,
             moments_detected=moments_detected,

@@ -62,7 +62,7 @@ async function cleanTempDirectories() {
 async function main() {
   logger.info({ interval: CLEANUP_INTERVAL, retention: FILE_RETENTION_MS }, 'Starting cleanup worker');
 
-  while (true) {
+  for (;;) {
     await cleanupStaleFiles();
     await cleanTempDirectories();
     await new Promise((resolve) => setTimeout(resolve, CLEANUP_INTERVAL));

@@ -1,4 +1,5 @@
 from typing import List, Optional, Dict, Any
+import asyncio
 import uuid
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, Filter, FieldCondition, MatchValue, PayloadSchemaType
@@ -11,18 +12,24 @@ settings = get_settings()
 class VectorService:
     def __init__(self):
         host = settings.QDRANT_HOST
-        if not host.startswith("http"):
-            host = f"https://{host}"
+        if host.startswith("http"):
+            url = host
+        elif "cloud.qdrant.io" in host:
+            url = f"https://{host}"
+        else:
+            url = f"http://{host}:{settings.QDRANT_PORT or 6333}"
+
         self.client = QdrantClient(
-            url=host,
-            api_key=settings.QDRANT_API_KEY,
+            url=url,
+            api_key=settings.QDRANT_API_KEY or None,
         )
-        app_logger.info(f"Vector service initialized: {host}")
+        app_logger.info(f"Vector service initialized: {url}")
 
     async def ensure_payload_indexes(self, collection_name: str) -> None:
         for field in ["file_id", "user_id", "document_id"]:
             try:
-                self.client.create_payload_index(
+                await asyncio.to_thread(
+                    self.client.create_payload_index,
                     collection_name=collection_name,
                     field_name=field,
                     field_schema=PayloadSchemaType.KEYWORD,
@@ -37,7 +44,8 @@ class VectorService:
         distance: Distance = Distance.COSINE,
     ) -> bool:
         try:
-            self.client.recreate_collection(
+            await asyncio.to_thread(
+                self.client.create_collection,
                 collection_name=collection_name,
                 vectors_config=VectorParams(
                     size=vector_size,
@@ -53,7 +61,7 @@ class VectorService:
 
     async def delete_collection(self, collection_name: str) -> bool:
         try:
-            self.client.delete_collection(collection_name=collection_name)
+            await asyncio.to_thread(self.client.delete_collection, collection_name=collection_name)
             app_logger.info(f"Collection deleted: {collection_name}")
             return True
         except Exception as e:
@@ -70,13 +78,13 @@ class VectorService:
         try:
             points = []
             for i in range(len(vectors)):
-                point_id = ids[i] if ids else str(uuid.uuid4())
+                point_id = str(ids[i]) if ids and ids[i] is not None else str(uuid.uuid4())
                 points.append({
                     "id": point_id,
                     "vector": vectors[i],
                     "payload": payloads[i],
                 })
-            self.client.upsert(
+            await asyncio.to_thread(self.client.upsert, 
                 collection_name=collection_name,
                 points=points,
             )
@@ -108,7 +116,7 @@ class VectorService:
                     ]
                 )
 
-            results = self.client.query_points(
+            results = await asyncio.to_thread(self.client.query_points, 
                 collection_name=collection_name,
                 query=query_embedding,
                 limit=limit,
@@ -117,11 +125,8 @@ class VectorService:
                 with_payload=True,
             )
 
-            result_list = list(results)
-            points = []
-            if result_list and len(result_list[0]) >= 2:
-                points = result_list[0][1]
-            
+            points = getattr(results, "points", []) or []
+
             return [
                 {
                     "id": r.id,
@@ -136,23 +141,57 @@ class VectorService:
 
     async def delete_points(self, collection_name: str, ids: List[str]) -> bool:
         try:
-            self.client.delete(
-                collection_name=collection_name,
-                points_selector=ids,
-            )
+            await asyncio.to_thread(self.client.delete, collection_name=collection_name, points_selector=ids)
             return True
         except Exception as e:
             app_logger.error(f"Error deleting points: {e}")
             return False
 
+    async def delete_by_filter(self, collection_name: str, filter_conditions: Dict[str, Any]) -> int:
+        """Delete all points matching the given payload conditions. Returns count deleted."""
+        try:
+            from qdrant_client.models import FilterSelector
+
+            search_filter = Filter(
+                must=[
+                    FieldCondition(key=key, match=MatchValue(value=value))
+                    for key, value in filter_conditions.items()
+                ]
+            )
+            try:
+                count_result = await asyncio.to_thread(self.client.count, 
+                    collection_name=collection_name,
+                    count_filter=search_filter,
+                    exact=True,
+                )
+                deleted = count_result.count
+            except Exception:
+                deleted = 0
+
+            await asyncio.to_thread(self.client.delete, collection_name=collection_name, points_selector=FilterSelector(filter=search_filter))
+            app_logger.info(f"Deleted {deleted} points by filter from {collection_name}: {filter_conditions}")
+            return deleted
+        except Exception as e:
+            app_logger.error(f"Error deleting by filter: {e}")
+            return 0
+
     async def collection_exists(self, collection_name: str) -> bool:
         try:
-            collections = self.client.get_collections().collections
+            client_collections = await asyncio.to_thread(self.client.get_collections)
+            collections = client_collections.collections
             return any(c.name == collection_name for c in collections)
         except Exception as e:
             app_logger.error(f"Error checking collection: {e}")
             return False
 
+    async def list_collections(self) -> list:
+        try:
+            client_collections = await asyncio.to_thread(self.client.get_collections)
+            collections = client_collections.collections
+            return [c.name for c in collections]
+        except Exception as e:
+            app_logger.error(f"Error listing collections: {e}")
+            return []
 
     async def get_collection_points(
         self,
@@ -170,7 +209,7 @@ class VectorService:
                     must=[FieldCondition(key="file_id", match=MatchValue(value=file_id))]
                 )
 
-            results = self.client.scroll(
+            results = await asyncio.to_thread(self.client.scroll, 
                 collection_name=collection_name,
                 limit=limit,
                 scroll_filter=filter_cond,

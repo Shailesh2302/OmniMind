@@ -5,290 +5,176 @@ import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { useUpload } from "@/hooks/useUpload";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import {
   Upload,
   FileText,
   Search,
   MessageSquare,
   Video,
-  ArrowRight,
-  Clock,
-  Sparkles,
-  TrendingUp,
+  ArrowUpRight,
+  HardDrive,
 } from "lucide-react";
-import {
-  formatDate,
-  formatFileSize,
-  formatRelativeTime,
-  getFileCategory,
-  getStatusColor,
-  getStatusLabel,
-} from "@/lib/utils";
+import { formatDate, formatFileSize, getFileCategory } from "@/lib/utils";
+
+const QUICK_ACTIONS = [
+  { href: "/upload", label: "Upload", desc: "Feed the engine", icon: Upload },
+  { href: "/search", label: "Search", desc: "Query everything", icon: Search },
+  { href: "/dashboard/chat", label: "Chat", desc: "Talk to your library", icon: MessageSquare },
+];
 
 export default function DashboardOverviewPage() {
   const { user } = useAuth();
-  const { files, fetchFiles, isFetching } = useUpload();
+  const { files, fetchFiles } = useUpload();
 
   useEffect(() => {
     fetchFiles();
   }, [fetchFiles]);
 
-  const fileList = useMemo(() => Array.isArray(files) ? files : [], [files]);
+  const fileList = useMemo(() => (Array.isArray(files) ? files : []), [files]);
 
   const stats = useMemo(() => {
     const totalSize = fileList.reduce((sum, f) => {
       const size = typeof f.size === "string" ? parseInt(f.size, 10) : f.size;
       return sum + (Number.isFinite(size) ? size : 0);
     }, 0);
-    const videos = fileList.filter(
-      (f) => getFileCategory(f.mimeType) === "video"
-    ).length;
-    const audio = fileList.filter(
-      (f) => getFileCategory(f.mimeType) === "audio"
-    ).length;
-    const images = fileList.filter(
-      (f) => getFileCategory(f.mimeType) === "image"
-    ).length;
-    return { totalSize, videos, audio, images };
+    const videos = fileList.filter((f) => getFileCategory(f.mimeType) === "video").length;
+    const docs = fileList.length - videos;
+    return { totalSize, videos, docs };
   }, [fileList]);
 
   const recentFiles = useMemo(
     () =>
       [...fileList]
-        .sort(
-          (a, b) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        )
-        .slice(0, 5),
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 6),
     [fileList]
   );
 
   const firstName = user?.name?.split(" ")[0] || "there";
 
   return (
-    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-      {/* Greeting */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+    <div className="mx-auto max-w-[1200px] px-6 py-10">
+      {/* Header row */}
+      <div className="reveal flex flex-col gap-5 border-b border-border pb-8 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Welcome back, {firstName}
+          <div className="mono-label mb-2">
+            {new Date().toLocaleDateString(undefined, { weekday: "short", day: "2-digit", month: "short" }).toUpperCase()}
+            {" · "}
+            CONSOLE
+          </div>
+          <h1 className="font-display text-4xl font-bold tracking-tight">
+            {firstName}<span className="lime-text">.</span>
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Here&apos;s what&apos;s happening with your content library.
-          </p>
         </div>
-        <Button asChild>
-          <Link href="/upload">
-            <Upload className="h-4 w-4" />
-            Upload files
-          </Link>
-        </Button>
-      </div>
-
-      {/* Stats */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          label="Total files"
-          value={fileList.length.toString()}
-          icon={FileText}
-          hint={
-            stats.videos + stats.audio + stats.images > 0
-              ? `${stats.videos} video · ${stats.audio} audio · ${stats.images} image`
-              : "No files yet"
-          }
-        />
-        <StatCard
-          label="Storage used"
-          value={formatFileSize(stats.totalSize)}
-          icon={TrendingUp}
-          hint="Across all uploads"
-        />
-        <StatCard
-          label="Videos"
-          value={stats.videos.toString()}
-          icon={Video}
-          hint="Ready to analyze"
-        />
-        <StatCard
-          label="Library"
-          value="AI-ready"
-          icon={Sparkles}
-          hint="Searchable index"
-        />
+        <Link
+          href="/upload"
+          className="btn-lime h-11 px-6 text-xs uppercase tracking-wider"
+        >
+          <Upload className="h-4 w-4" />
+          Upload
+        </Link>
       </div>
 
       {/* Quick actions */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <QuickAction
-          href="/upload"
-          icon={Upload}
-          title="Upload files"
-          description="Add video, audio, or images"
-        />
-        <QuickAction
-          href="/search"
-          icon={Search}
-          title="Search"
-          description="Find anything in seconds"
-        />
-        <QuickAction
-          href="/dashboard/chat"
-          icon={MessageSquare}
-          title="AI chat"
-          description="Ask questions about your files"
-        />
-        <QuickAction
-          href="/dashboard/videos"
-          icon={Video}
-          title="Browse videos"
-          description="Open a video to analyze"
-        />
-      </div>
-
-      {/* Recent files */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <div>
-            <CardTitle>Recent files</CardTitle>
-            <CardDescription>Your most recently uploaded content</CardDescription>
-          </div>
-          <Button variant="ghost" size="sm" asChild>
-            <Link href="/dashboard/files">
-              View all
-              <ArrowRight className="h-3 w-3" />
+      <div className="reveal reveal-1 mt-8 grid gap-px border border-border bg-border sm:grid-cols-3">
+        {QUICK_ACTIONS.map((a) => {
+          const Icon = a.icon;
+          return (
+            <Link
+              key={a.href}
+              href={a.href}
+              className="group flex items-center justify-between bg-background p-5 transition-colors hover:bg-white/[0.03]"
+            >
+              <span className="flex items-center gap-4">
+                <Icon className="h-5 w-5 text-muted-foreground transition group-hover:lime-text" />
+                <span>
+                  <span className="block text-sm font-semibold">{a.label}</span>
+                  <span className="block text-xs text-muted-foreground">{a.desc}</span>
+                </span>
+              </span>
+              <ArrowUpRight className="h-4 w-4 -translate-x-1 text-muted-foreground opacity-0 transition-all group-hover:translate-x-0 group-hover:text-lime-300 group-hover:opacity-100" />
             </Link>
-          </Button>
-        </CardHeader>
-        <CardContent>
-          {isFetching && fileList.length === 0 ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">
-              Loading files…
-            </div>
-          ) : recentFiles.length === 0 ? (
-            <EmptyState />
-          ) : (
-            <div className="divide-y">
-              {recentFiles.map((file) => {
-                const category = getFileCategory(file.mimeType);
-                return (
-                  <Link
-                    key={file.id}
-                    href={
-                      category === "video"
-                        ? `/dashboard/videos/${file.id}`
-                        : "/dashboard/files"
-                    }
-                    className="flex items-center gap-4 py-3 transition-colors hover:bg-accent/30 -mx-2 px-2 rounded-md"
-                  >
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                      {category === "video" ? (
-                        <Video className="h-4 w-4" />
-                      ) : (
-                        <FileText className="h-4 w-4" />
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">
-                        {file.originalName}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatFileSize(file.size)} ·{" "}
-                        {formatRelativeTime(file.createdAt)}
-                      </p>
-                    </div>
-                    <Badge variant={getStatusColor(file.status)}>
-                      {getStatusLabel(file.status)}
-                    </Badge>
-                  </Link>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
+          );
+        })}
+      </div>
 
-interface StatCardProps {
-  label: string;
-  value: string;
-  icon: React.ComponentType<{ className?: string }>;
-  hint?: string;
-}
+      {/* Stats */}
+      <div className="reveal reveal-2 mt-8 grid grid-cols-3 gap-px border border-border bg-border">
+        {[
+          { icon: <FileText className="h-3.5 w-3.5" />, v: String(fileList.length), l: "FILES" },
+          { icon: <HardDrive className="h-3.5 w-3.5" />, v: formatFileSize(stats.totalSize), l: "STORAGE" },
+          { icon: <Video className="h-3.5 w-3.5" />, v: String(stats.videos), l: "VIDEOS" },
+        ].map((s) => (
+          <div key={s.l} className="bg-background p-5">
+            <div className="mono-label flex items-center gap-2">
+              {s.icon}
+              {s.l}
+            </div>
+            <div className="mt-3 font-display text-3xl font-bold tracking-tight">{s.v}</div>
+          </div>
+        ))}
+      </div>
 
-function StatCard({ label, value, icon: Icon, hint }: StatCardProps) {
-  return (
-    <Card>
-      <CardContent className="p-5">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            {label}
-          </span>
-          <Icon className="h-4 w-4 text-muted-foreground" />
+      {/* Recent */}
+      <div className="reveal reveal-3 mt-12">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="font-display text-lg font-semibold">
+            Recent<span className="lime-text">.</span>
+          </h2>
+          <Link href="/dashboard/files" className="mono-label transition hover:text-foreground">
+            ALL FILES →
+          </Link>
         </div>
-        <div className="mt-2 text-2xl font-semibold tracking-tight">
-          {value}
-        </div>
-        {hint && (
-          <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+
+        {recentFiles.length === 0 ? (
+          <div className="panel p-14 text-center">
+            <div className="mx-auto mb-5 grid h-12 w-12 place-items-center border border-border bg-secondary text-muted-foreground">
+              <Upload className="h-5 w-5" />
+            </div>
+            <h3 className="font-display font-semibold">Empty engine</h3>
+            <p className="mx-auto mt-1.5 max-w-sm text-sm text-muted-foreground">
+              Drop a video or document in and it becomes searchable within a minute.
+            </p>
+            <Link href="/upload" className="btn-lime mt-6 px-6 py-2.5 text-xs uppercase tracking-wider">
+              First upload
+            </Link>
+          </div>
+        ) : (
+          <div className="border-t border-border">
+            {recentFiles.map((f) => {
+              const isVideo = getFileCategory(f.mimeType) === "video";
+              const status = String(f.status).toUpperCase();
+              return (
+                <Link
+                  key={f.id}
+                  href={isVideo ? `/dashboard/videos/${f.id}` : "/dashboard/files"}
+                  className="group flex items-center gap-4 border-b border-border px-2 py-4 transition hover:bg-white/[0.02]"
+                >
+                  <span className="font-mono text-[10px] text-muted-foreground">
+                    {isVideo ? "VID" : "DOC"}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium group-hover:lime-text">
+                      {f.originalName}
+                    </span>
+                    <span className="block font-mono text-[11px] text-muted-foreground">
+                      {formatDate(f.createdAt)} · {formatFileSize(typeof f.size === "string" ? parseInt(f.size, 10) : f.size)}
+                    </span>
+                  </span>
+                  <StatusPill status={status} />
+                  <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition group-hover:opacity-100" />
+                </Link>
+              );
+            })}
+          </div>
         )}
-      </CardContent>
-    </Card>
-  );
-}
-
-interface QuickActionProps {
-  href: string;
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  description: string;
-}
-
-function QuickAction({ href, icon: Icon, title, description }: QuickActionProps) {
-  return (
-    <Link
-      href={href}
-      className="group flex flex-col gap-2 rounded-lg border bg-card p-4 transition-colors hover:border-primary/40 hover:bg-accent/30"
-    >
-      <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary/10 text-primary">
-        <Icon className="h-4 w-4" />
       </div>
-      <div>
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium">{title}</h3>
-          <ArrowRight className="h-3 w-3 -translate-x-1 text-muted-foreground opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
-        </div>
-        <p className="text-xs text-muted-foreground">{description}</p>
-      </div>
-    </Link>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="py-10 text-center">
-      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-        <Clock className="h-5 w-5" />
-      </div>
-      <h3 className="text-sm font-medium">No files yet</h3>
-      <p className="mt-1 text-xs text-muted-foreground">
-        Upload your first file to get started.
-      </p>
-      <Button asChild size="sm" className="mt-4">
-        <Link href="/upload">
-          <Upload className="h-3 w-3" />
-          Upload files
-        </Link>
-      </Button>
     </div>
   );
+}
+
+function StatusPill({ status }: { status: string }) {
+  if (status === "COMPLETED") return <span className="pill pill-ok">DONE</span>;
+  if (status === "PROCESSING") return <span className="pill pill-busy"><span className="live-dot !h-1 !w-1" />PROC</span>;
+  if (status === "FAILED") return <span className="pill pill-err">FAIL</span>;
+  return <span className="pill pill-warn">PEND</span>;
 }

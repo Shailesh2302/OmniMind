@@ -135,6 +135,9 @@ export class AuthService {
   }
 
   generateToken(userId: string, email: string): string {
+    if (!config.jwt.secret) {
+      throw new Error('JWT_SECRET is not configured - refusing to sign tokens');
+    }
     return jwt.sign(
       { userId, email } as TokenPayload,
       config.jwt.secret,
@@ -143,6 +146,9 @@ export class AuthService {
   }
 
   verifyToken(token: string): TokenPayload {
+    if (!config.jwt.secret) {
+      throw new Error('JWT_SECRET is not configured');
+    }
     return jwt.verify(token, config.jwt.secret) as TokenPayload;
   }
 }

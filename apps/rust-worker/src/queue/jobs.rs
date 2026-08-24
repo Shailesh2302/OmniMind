@@ -5,6 +5,10 @@ use crate::queue::redis_client::RedisClient;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct JobParameters {
+    #[serde(default, rename = "userId")]
+    pub user_id: Option<String>,
+    #[serde(default, rename = "mimeType")]
+    pub mime_type: Option<String>,
     #[serde(default)]
     pub start_time: Option<f64>,
     #[serde(default)]
@@ -24,10 +28,14 @@ pub struct JobParameters {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QueueJob {
     pub id: String,
+    /// Node's queue service serializes this field as "type".
+    #[serde(rename = "type", alias = "job_type")]
     pub job_type: String,
+    #[serde(default)]
     pub video_id: String,
-    pub input_path: String,
+    pub input_path: String,    #[serde(default)]
     pub output_path: Option<String>,
+    #[serde(default)]
     pub status: String,
     #[serde(default)]
     pub parameters: Option<JobParameters>,

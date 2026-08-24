@@ -66,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     info!("Aether Rust Worker started successfully");
-    info!("WebSocket server running on ws://0.0.0.0:9000");
+    info!("WebSocket server running on ws://{}:{}", config.ws_host, config.ws_port);
     info!("Queue worker processing jobs from Redis");
     info!("Ready to process video jobs from Redis queue");
 

@@ -81,6 +81,7 @@ class DocumentService:
 
                     if not full_text.strip():
                         metadata["extract_method"] = "fallback"
+                        text_parts.clear()
                         with open(file_path, "rb") as f:
                             reader = pypdf.PdfReader(f)
                             for page in reader.pages:
@@ -89,6 +90,7 @@ class DocumentService:
 
             except Exception as e:
                 app_logger.warning(f"pdfplumber failed, using pypdf: {e}")
+                text_parts.clear()
                 with open(file_path, "rb") as f:
                     reader = pypdf.PdfReader(f)
                     metadata["pages"] = len(reader.pages)

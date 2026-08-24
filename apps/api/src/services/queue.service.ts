@@ -52,9 +52,7 @@ class QueueService {
         port: config.redis.port,
         password: config.redis.password,
         maxRetriesPerRequest: 1,
-        retryStrategy(times) {
-          return null;
-        },
+        retryStrategy: () => null,
         enableOfflineQueue: false,
         connectTimeout: 5000,
       });
@@ -142,7 +140,7 @@ class QueueService {
     return jobId;
   }
 
-  async addClipGenerationJob(data: { fileId: string; filePath: string; startTime: number; endTime: number; userId: string }): Promise<string> {
+  async addClipGenerationJob(data: { fileId: string; filePath: string; startTime: number; endTime: number; userId: string; clipId?: string }): Promise<string> {
     const jobId = this.createJobId('clip');
 
     const job: ClipJobData = {
@@ -153,6 +151,10 @@ class QueueService {
       start_time: data.startTime,
       end_time: data.endTime,
       output_path: `/tmp/aether/clips/clip-${jobId}.mp4`,
+      parameters: {
+        userId: data.userId,
+        ...(data.clipId ? { clipId: data.clipId } : {}),
+      },
       status: 'Queued',
     };
 

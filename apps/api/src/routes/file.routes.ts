@@ -118,7 +118,7 @@ router.patch(
   validateRequest,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const { name, status, metadata } = req.body;
+      const { name, originalName, status, metadata } = req.body;
 
       const file = await prisma.file.findFirst({
         where: { id: req.params.id, userId: req.user!.userId },
@@ -130,6 +130,7 @@ router.patch(
 
       const updateData: any = {};
       if (name) updateData.name = name;
+      if (originalName) updateData.originalName = originalName;
       if (status) updateData.status = status;
       if (metadata) updateData.metadata = metadata;
 

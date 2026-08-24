@@ -12,7 +12,6 @@ import {
   MessageSquare,
   Scissors,
   Settings,
-  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 
@@ -37,45 +36,95 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="hidden lg:flex w-60 shrink-0 flex-col border-r bg-card">
-      <div className="flex-1 overflow-y-auto p-4">
-        <nav className="space-y-0.5">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive =
-              pathname === item.href ||
-              (item.href !== "/dashboard" &&
-                pathname.startsWith(item.href + "/"));
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-                )}
-              >
-                <Icon className="h-4 w-4" />
-                <span>{item.label}</span>
-              </Link>
-            );
-          })}
-        </nav>
+    <aside className="hairline-r sticky top-0 hidden h-screen w-60 shrink-0 flex-col bg-background lg:flex">
+      {/* Logo */}
+      <div className="flex items-center justify-between px-5 pb-6 pt-6">
+        <Link href="/" className="flex items-center gap-3">
+          <span className="grid h-7 w-7 place-items-center bg-lime-300 font-display text-xs font-bold text-black">Æ</span>
+          <span className="font-display text-sm font-bold tracking-[0.22em]">AETHER</span>
+        </Link>
       </div>
+      <div className="mono-label px-5 pb-3">CONSOLE</div>
 
-      <div className="border-t p-4">
-        <div className="rounded-md border bg-muted/50 p-3">
-          <div className="flex items-center gap-2 mb-1.5">
-            <Sparkles className="h-3.5 w-3.5 text-primary" />
-            <h4 className="text-xs font-semibold">AI Tip</h4>
+      {/* Nav */}
+      <nav className="flex-1 space-y-px overflow-y-auto px-3">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          const isActive =
+            pathname === item.href ||
+            (item.href !== "/dashboard" && pathname.startsWith(item.href + "/"));
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn(
+                "group relative flex items-center gap-3 px-3.5 py-2.5 text-sm transition-all",
+                isActive
+                  ? "bg-white/[0.05] font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-white/[0.03] hover:text-foreground"
+              )}
+            >
+              {/* Active marker: lime bar */}
+              <span
+                className={cn(
+                  "absolute left-0 top-1/2 h-[60%] w-[2px] -translate-y-1/2 transition-all",
+                  isActive ? "bg-lime-300" : "bg-transparent group-hover:bg-white/20"
+                )}
+              />
+              <Icon
+                className={cn(
+                  "h-4 w-4",
+                  isActive ? "lime-text" : "text-muted-foreground group-hover:text-foreground"
+                )}
+              />
+              <span>{item.label}</span>
+              {isActive && (
+                <span className="ml-auto font-mono text-[10px] text-muted-foreground">●</span>
+              )}
+            </Link>
+          );
+        })}
+      </nav>
+
+      {/* Footer status */}
+      <div className="p-4">
+        <div className="panel p-4">
+          <div className="mb-2 flex items-center gap-2">
+            <span className="live-dot" />
+            <span className="mono-label">Engine online</span>
           </div>
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            Use semantic search to find content across all your files instantly.
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Uploads become searchable in under a minute.
           </p>
         </div>
       </div>
     </aside>
+  );
+}
+
+export function MobileNav() {
+  const pathname = usePathname();
+  return (
+    <nav className="ml-auto flex items-center gap-1 overflow-x-auto">
+      {navItems.slice(0, 6).map((item) => {
+        const Icon = item.icon;
+        const isActive =
+          pathname === item.href ||
+          (item.href !== "/dashboard" && pathname.startsWith(item.href + "/"));
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            className={cn(
+              "p-2 transition",
+              isActive ? "bg-white/[0.07] lime-text" : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
+            )}
+            aria-label={item.label}
+          >
+            <Icon className="h-[18px] w-[18px]" />
+          </Link>
+        );
+      })}
+    </nav>
   );
 }

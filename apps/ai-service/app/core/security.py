@@ -1,5 +1,6 @@
 from fastapi import HTTPException, Security, status
 from fastapi.security import APIKeyHeader
+import secrets
 
 from app.core.config import get_settings
 
@@ -18,7 +19,7 @@ async def verify_api_key(api_key: str = Security(api_key_header)) -> str:
             detail="API key not configured",
         )
 
-    if api_key != settings.SECURITY_API_KEY:
+    if not api_key or not secrets.compare_digest(api_key, settings.SECURITY_API_KEY):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key",

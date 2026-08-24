@@ -47,38 +47,48 @@ export interface EmbeddingResponse {
 }
 
 class AIService {
-  private baseUrl = 'https://integrate.api.nvidia.com/v1';
+  private baseUrl = process.env.AI_BASE_URL || 'https://openrouter.ai/api/v1';
   private apiKey: string;
-  private model = 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning';
-  private embeddingModel = 'nvidia/nv-embed-v1';
+  private model = process.env.AI_CHAT_MODEL || 'stealth/ox-alpha';
+  private embeddingModel = process.env.AI_EMBEDDING_MODEL || 'openai/text-embedding-3-small';
   private defaultTemperature = 0.6;
   private defaultTopP = 0.95;
-  private defaultMaxTokens = 4096;
+  private defaultMaxTokens = Number(process.env.AI_MAX_TOKENS) || 2048;
 
   constructor() {
     this.apiKey = config.ai.apiKey;
+  }
+
+  private buildHeaders(): Record<string, string> {
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${this.apiKey}`,
+      'HTTP-Referer': process.env.APP_URL || 'http://localhost:3000',
+      'X-Title': 'Aether',
+    };
+  }
+
+  private buildBody(request: ChatCompletionRequest, stream: boolean): Record<string, unknown> {
+    const body: Record<string, unknown> = {
+      model: this.model,
+      messages: request.messages,
+      temperature: request.temperature ?? this.defaultTemperature,
+      top_p: this.defaultTopP,
+      max_tokens: request.maxTokens ?? this.defaultMaxTokens,
+      stream,
+    };
+    if ((process.env.AI_REASONING_EFFORT || 'low') !== 'high') {
+      body.reasoning = { effort: process.env.AI_REASONING_EFFORT || 'low', exclude: true };
+    }
+    return body;
   }
 
   async chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
     try {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: this.model,
-          messages: request.messages,
-          temperature: request.temperature ?? this.defaultTemperature,
-          top_p: this.defaultTopP,
-          max_tokens: request.maxTokens ?? this.defaultMaxTokens,
-          stream: request.stream ?? false,
-          extra_body: {
-            chat_template_kwargs: { enable_thinking: true },
-            reasoning_budget: 16384,
-          },
-        }),
+        headers: this.buildHeaders(),
+        body: JSON.stringify(this.buildBody(request, false)),
       });
 
       if (!response.ok) {
@@ -98,22 +108,8 @@ class AIService {
     try {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: this.model,
-          messages: request.messages,
-          temperature: request.temperature ?? this.defaultTemperature,
-          top_p: this.defaultTopP,
-          max_tokens: request.maxTokens ?? this.defaultMaxTokens,
-          stream: true,
-          extra_body: {
-            chat_template_kwargs: { enable_thinking: true },
-            reasoning_budget: 16384,
-          },
-        }),
+        headers: this.buildHeaders(),
+        body: JSON.stringify(this.buildBody(request, true)),
       });
 
       if (!response.ok) {
@@ -144,11 +140,12 @@ class AIService {
             }
             try {
               const parsed = JSON.parse(data);
-              const content = parsed.choices?.[0]?.delta?.content;
+              const delta = parsed.choices?.[0]?.delta;
+              const content = delta?.content;
               if (content) {
                 yield content;
               }
-              const reasoning = parsed.choices?.[0]?.delta?.reasoning_content;
+              const reasoning = delta?.reasoning ?? delta?.reasoning_content;
               if (reasoning) {
                 yield `<!-- reasoning: ${reasoning} -->`;
               }
@@ -170,10 +167,7 @@ class AIService {
       
       const response = await fetch(`${this.baseUrl}/embeddings`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`,
-        },
+        headers: this.buildHeaders(),
         body: JSON.stringify({
           input: textInput,
           model: this.embeddingModel,

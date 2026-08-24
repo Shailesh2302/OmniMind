@@ -7,6 +7,27 @@ from app.core.logger import app_logger
 
 settings = get_settings()
 
+MAX_LLM_RETRIES = 3
+RETRYABLE_STATUS = {408, 409, 429, 500, 502, 503, 504}
+
+
+async def _with_retries(fn, *args, **kwargs):
+    """Retry transient provider failures (network_error / 429 / 5xx) with backoff."""
+    last_err: Exception | None = None
+    for attempt in range(1, MAX_LLM_RETRIES + 1):
+        try:
+            return await fn(*args, **kwargs)
+        except Exception as e:  # noqa: BLE001 - inspect and re-raise if not retryable
+            status = getattr(e, "status_code", None) or getattr(getattr(e, "response", None), "status_code", None)
+            retryable = status in RETRYABLE_STATUS or status is None
+            if not retryable or attempt == MAX_LLM_RETRIES:
+                raise
+            last_err = e
+            delay = 2 ** (attempt - 1)
+            app_logger.warning(f"LLM call failed (attempt {attempt}), retrying in {delay}s: {e}")
+            await asyncio.sleep(delay)
+    raise last_err  # pragma: no cover
+
 
 class LLMService:
     def __init__(self):
@@ -22,8 +43,24 @@ class LLMService:
             self._client = AsyncOpenAI(
                 base_url=settings.NVIDIA_BASE_URL,
                 api_key=settings.NVIDIA_API_KEY,
+                timeout=settings.LLM_TIMEOUT_SECONDS,
             )
         return self._client
+
+    def _request_kwargs(self) -> dict:
+        kwargs: dict = {
+            "temperature": 0.6,
+            "top_p": 0.95,
+            "max_tokens": settings.LLM_MAX_TOKENS,
+        }
+        if settings.LLM_REASONING_EFFORT != "high":
+            kwargs["extra_body"] = {
+                "reasoning": {
+                    "effort": settings.LLM_REASONING_EFFORT,
+                    "exclude": True,
+                }
+            }
+        return kwargs
 
     async def generate_response(
         self,
@@ -49,19 +86,15 @@ class LLMService:
         messages.append({"role": "user", "content": query})
 
         try:
-            response = await self.client.chat.completions.create(
+            response = await _with_retries(
+                self.client.chat.completions.create,
                 model=self.model,
                 messages=messages,
-                temperature=0.6,
-                top_p=0.95,
-                max_tokens=4096,
-                extra_body={
-                    "chat_template_kwargs": {"enable_thinking": True},
-                    "reasoning_budget": 16384,
-                },
+                **self._request_kwargs(),
             )
 
-            return response.choices[0].message.content or ""
+            message = response.choices[0].message
+            return (message.content or "").strip() or "(no content)"
         except Exception as e:
             app_logger.error(f"LLM generate_response error: {e}")
             raise
@@ -90,17 +123,12 @@ class LLMService:
         messages.append({"role": "user", "content": query})
 
         try:
-            stream = await self.client.chat.completions.create(
+            stream = await _with_retries(
+                self.client.chat.completions.create,
                 model=self.model,
                 messages=messages,
-                temperature=0.6,
-                top_p=0.95,
-                max_tokens=4096,
                 stream=True,
-                extra_body={
-                    "chat_template_kwargs": {"enable_thinking": True},
-                    "reasoning_budget": 16384,
-                },
+                **self._request_kwargs(),
             )
 
             async for chunk in stream:
@@ -127,16 +155,11 @@ class LLMService:
         processed_messages.extend(messages)
 
         try:
-            response = await self.client.chat.completions.create(
+            response = await _with_retries(
+                self.client.chat.completions.create,
                 model=self.model,
                 messages=processed_messages,
-                temperature=0.6,
-                top_p=0.95,
-                max_tokens=4096,
-                extra_body={
-                    "chat_template_kwargs": {"enable_thinking": True},
-                    "reasoning_budget": 16384,
-                },
+                **self._request_kwargs(),
             )
 
             return response.choices[0].message.content or ""

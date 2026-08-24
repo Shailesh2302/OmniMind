@@ -26,11 +26,15 @@ class StorageService {
   private storageType: 'local' | 'cloudinary' | 's3';
 
   constructor() {
-    this.cloudName = process.env.CLOUDINARY_CLOUD_NAME || 'dt50pmuar';
-    this.apiKey = process.env.CLOUDINARY_API_KEY || '897834594944128';
-    this.apiSecret = process.env.CLOUDINARY_API_SECRET || 'jeyBbFwh6NtIavUzGNrXMmQ8YPI';
-    this.uploadPreset = process.env.CLOUDINARY_UPLOAD_PRESET || 'aether';
-    this.storageType = (process.env.STORAGE_TYPE || 'cloudinary') as 'local' | 'cloudinary' | 's3';
+    this.cloudName = process.env.CLOUDINARY_CLOUD_NAME || '';
+    this.apiKey = process.env.CLOUDINARY_API_KEY || '';
+    this.apiSecret = process.env.CLOUDINARY_API_SECRET || '';
+    this.uploadPreset = process.env.CLOUDINARY_UPLOAD_PRESET || '';
+    this.storageType = (process.env.STORAGE_TYPE || 'local') as 'local' | 'cloudinary' | 's3';
+    if (this.storageType === 'cloudinary' && (!this.cloudName || !this.apiKey || !this.apiSecret)) {
+      logger.warn('STORAGE_TYPE=cloudinary but CLOUDINARY_* env vars are not fully configured - falling back to local storage');
+      this.storageType = 'local';
+    }
   }
 
   async initialize(): Promise<void> {
@@ -230,7 +234,7 @@ class StorageService {
     return `${config.storage.apiUrl}${relativePath}`;
   }
 
-  async getDownloadUrl(publicId: string, originalName: string): Promise<string> {
+  async getDownloadUrl(publicId: string, _originalName: string): Promise<string> {
     if (this.storageType === 'cloudinary') {
       return `https://res.cloudinary.com/${this.cloudName}/video/upload/${publicId}`;
     }

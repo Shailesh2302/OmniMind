@@ -25,10 +25,12 @@ class VectorService {
   private apiKey: string;
 
   constructor() {
-    const host = config.qdrant.host.startsWith('http') 
-      ? config.qdrant.host 
-      : `https://${config.qdrant.host}`;
-    this.baseUrl = `${host}:${config.qdrant.port}`;
+    const host = config.qdrant.host.startsWith('http')
+      ? config.qdrant.host
+      : `http://${config.qdrant.host}`;
+    this.baseUrl = host.includes('cloud.qdrant.io')
+      ? `https://${config.qdrant.host}`
+      : `${host}:${config.qdrant.port}`;
     this.grpcPort = config.qdrant.grpcPort;
     this.apiKey = config.qdrant.apiKey;
   }
@@ -46,11 +48,10 @@ class VectorService {
 
   async createCollection(name: string, vectorSize: number): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/collections`, {
-        method: 'POST',
+      const response = await fetch(`${this.baseUrl}/collections/${name}`, {
+        method: 'PUT',
         headers: this.getHeaders(),
         body: JSON.stringify({
-          name,
           vectors: {
             size: vectorSize,
             distance: 'Cosine',
@@ -58,10 +59,16 @@ class VectorService {
         }),
       });
 
-      return response.ok;
+      if (!response.ok) {
+        const body = await response.text();
+        logger.error({ err: body.slice(0, 300), name, status: response.status }, 'Qdrant createCollection failed');
+        return false;
+      }
+
+      return true;
     } catch (error) {
-      logger.error({ error, name, vectorSize }, 'Failed to create collection');
-      throw error;
+      logger.error({ err: error instanceof Error ? error.message : String(error), name }, 'Failed to create collection');
+      return false;
     }
   }
 
@@ -93,9 +100,15 @@ class VectorService {
         }),
       });
 
-      return response.ok;
+      if (!response.ok) {
+        const body = await response.text();
+        logger.error({ err: body.slice(0, 300), collection, status: response.status }, 'Qdrant upsert failed');
+        return false;
+      }
+
+      return true;
     } catch (error) {
-      logger.error({ error, collection, pointsCount: points.length }, 'Failed to upsert points');
+      logger.error({ err: error instanceof Error ? error.message : String(error), collection, pointsCount: points.length }, 'Failed to upsert points');
       throw error;
     }
   }
@@ -108,42 +121,44 @@ class VectorService {
     filter?: Record<string, unknown>
   ): Promise<SearchResult[]> {
     try {
-      const filterBody = filter
-        ? {
-            filter: {
-              must: Object.entries(filter).map(([key, value]) => ({
-                key,
-                match: { value },
-              })),
-            },
-          }
-        : {};
+      const body: Record<string, unknown> = {
+        query: vector,
+        limit,
+        with_payload: true,
+      };
+      if (scoreThreshold > 0) {
+        body.score_threshold = scoreThreshold;
+      }
+      if (filter && Object.keys(filter).length > 0) {
+        body.filter = {
+          must: Object.entries(filter).map(([key, value]) => ({
+            key,
+            match: { value },
+          })),
+        };
+      }
 
-      const response = await fetch(`${this.baseUrl}/collections/${collection}/points/search`, {
+      const response = await fetch(`${this.baseUrl}/collections/${collection}/points/query`, {
         method: 'POST',
         headers: this.getHeaders(),
-        body: JSON.stringify({
-          vector,
-          limit,
-          score_threshold: scoreThreshold,
-          ...filterBody,
-          with_payload: true,
-        }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {
-        throw new Error(`Search failed: ${response.statusText}`);
+        const errText = await response.text();
+        throw new Error(`Search failed: ${response.status} ${errText.slice(0, 200)}`);
       }
 
       const data = await response.json() as any;
-      
-      return data.result.map((p: { id: string; score: number; payload: Record<string, unknown> }) => ({
+      const points = data.result?.points || [];
+
+      return points.map((p: { id: string; score: number; payload: Record<string, unknown> }) => ({
         id: p.id,
         score: p.score,
-        payload: p.payload,
+        payload: p.payload ?? {},
       }));
     } catch (error) {
-      logger.error({ error, collection, vectorSize: vector.length }, 'Failed to search points');
+      logger.error({ err: error instanceof Error ? error.message : String(error), collection, vectorSize: vector.length }, 'Failed to search points');
       throw error;
     }
   }
@@ -174,11 +189,12 @@ class VectorService {
       }
 
       const data = await response.json() as any;
-      
-      return data.result.map((c: { name: string; vectors: number; points: number }) => ({
-        name: c.name,
-        vectors: c.vectors,
-        points: c.points,
+      const collections: Array<{ name: string }> = data.result?.collections || [];
+
+      return collections.map(({ name }) => ({
+        name,
+        vectors: 0,
+        points: 0,
       }));
     } catch (error) {
       logger.error({ error }, 'Failed to get collections');
@@ -188,7 +204,10 @@ class VectorService {
 
   async collectionExists(name: string): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/collections/${name}`);
+      const response = await fetch(`${this.baseUrl}/collections/${name}`, {
+        headers: this.getHeaders(),
+      });
+      if (response.status === 404) return false;
       return response.ok;
     } catch {
       return false;

@@ -1,26 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useAuthStore } from "@/store/useAuthStore";
-import { Spinner } from "@/components/ui/spinner";
 
+/**
+ * App-wide providers.
+ *
+ * IMPORTANT: never gate `children` behind a loading state here — doing so
+ * blanks every page (including SSR output) whenever the auth check is slow
+ * or the API is unreachable. Pages that genuinely require auth (dashboard)
+ * enforce it in their own layouts.
+ */
 export function Providers({ children }: { children: React.ReactNode }) {
   const checkAuth = useAuthStore((s) => s.checkAuth);
-  const isLoading = useAuthStore((s) => s.isLoading);
-  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
-    checkAuth();
+    // Refresh the session in the background; never block rendering on it.
+    void checkAuth();
   }, [checkAuth]);
-
-  if (!mounted || isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <Spinner size="lg" />
-      </div>
-    );
-  }
 
   return <>{children}</>;
 }

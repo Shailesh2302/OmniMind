@@ -23,9 +23,9 @@ const fileFilter = (
   const allowedMimes = [
     'video/mp4',
     'video/webm',
-    'video/avi',
-    'video/mkv',
-    'video/mov',
+    'video/quicktime',
+    'video/x-matroska',
+    'video/x-msvideo',
     'application/pdf',
     'application/msword',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',

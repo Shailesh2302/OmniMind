@@ -36,8 +36,8 @@ impl WebSocketManager {
 }
 
 pub async fn run_websocket_server(app_state: Arc<AppState>) -> anyhow::Result<()> {
-    let addr = "0.0.0.0:9000";
-    let listener = TcpListener::bind(addr).await?;
+    let addr = format!("{}:{}", app_state.config.ws_host, app_state.config.ws_port);
+    let listener = TcpListener::bind(&addr).await?;
     info!("WebSocket server listening on ws://{}", addr);
 
     loop {

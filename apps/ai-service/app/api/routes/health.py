@@ -1,10 +1,9 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from app.api.dependencies import API_KEY_DEP
 from app.core.config import get_settings
 from app.core.logger import app_logger
-from app.services.rag_service import RAGService
+from app.services.vector_service import vector_service
 
 settings = get_settings()
 
@@ -12,7 +11,8 @@ router = APIRouter(tags=["health"])
 
 
 @router.get("/health")
-async def health_check(api_key: API_KEY_DEP) -> JSONResponse:
+async def health_check() -> JSONResponse:
+    # Deliberately unauthenticated so container healthchecks work.
     return JSONResponse(
         content={
             "status": "healthy",
@@ -23,10 +23,9 @@ async def health_check(api_key: API_KEY_DEP) -> JSONResponse:
 
 
 @router.get("/health/ready")
-async def readiness_check(api_key: API_KEY_DEP) -> JSONResponse:
+async def readiness_check() -> JSONResponse:
     try:
-        rag_service = RAGService()
-        collections = await rag_service.get_collections()
+        collections = await vector_service.list_collections()
 
         return JSONResponse(
             content={
@@ -40,7 +39,7 @@ async def readiness_check(api_key: API_KEY_DEP) -> JSONResponse:
         return JSONResponse(
             content={
                 "status": "not ready",
-                "error": str(e),
+                "qdrant_connected": False,
             },
             status_code=503,
         )

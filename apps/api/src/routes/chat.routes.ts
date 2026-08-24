@@ -73,7 +73,7 @@ router.post(
           queryEmbedding,
           10,
           0.0,
-          undefined
+          filterConditions
         );
 
         if (searchResults.length > 0) {
@@ -163,21 +163,56 @@ router.post(
   validateRequest,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const { message } = req.body;
+      const { message, fileId, sessionId } = req.body;
       const userId = req.user!.userId;
+
+      let session = null;
+      if (sessionId) {
+        session = await prisma.session.findFirst({
+          where: { id: sessionId, userId },
+        });
+      }
+      if (!session) {
+        session = await prisma.session.create({
+          data: {
+            userId,
+            title: message.slice(0, 50),
+            type: 'CHAT',
+          },
+        });
+      }
+
+      await prisma.message.create({
+        data: {
+          sessionId: session.id,
+          userId,
+          role: 'USER',
+          content: message,
+        },
+      });
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
 
+      res.write(`data: ${JSON.stringify({ sessionId: session.id })}\n\n`);
+
       let context = '';
       try {
         const queryEmbedding = await aiService.createEmbedding(message);
+        const collectionName = `user_${userId}`.replace(/-/g, '_');
+
+        let filterConditions: Record<string, unknown> | undefined;
+        if (fileId) {
+          filterConditions = { file_id: fileId };
+        }
+
         const searchResults = await vectorService.searchPoints(
-          `user:${userId}`,
+          collectionName,
           queryEmbedding,
           10,
-          0.5
+          0.5,
+          filterConditions
         );
 
         if (searchResults.length > 0) {
@@ -199,17 +234,33 @@ router.post(
             { role: 'user' as const, content: message },
           ];
 
-      for await (const chunk of aiService.streamChatCompletion({ messages })) {
-        res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+      let fullResponse = '';
+      try {
+        for await (const chunk of aiService.streamChatCompletion({ messages })) {
+          fullResponse += chunk;
+          res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+        }
+      } catch (streamError) {
+        logger.error({ streamError }, 'LLM stream failed mid-response');
       }
 
-      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      if (fullResponse.trim()) {
+        await prisma.message.create({
+          data: {
+            sessionId: session.id,
+            userId,
+            role: 'ASSISTANT',
+            content: fullResponse,
+          },
+        });
+      }
+
+      res.write(`data: ${JSON.stringify({ done: true, sessionId: session.id })}\n\n`);
       res.end();
     } catch (error) {
       logger.error({ error }, 'Streaming chat error');
       res.write(`data: ${JSON.stringify({ error: 'Stream failed' })}\n\n`);
       res.end();
-      next(error);
     }
   }
 );

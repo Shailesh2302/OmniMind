@@ -2,9 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
 import { prisma } from '../config/db.js';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
-import { aiService } from '../services/ai.service.js';
 import { queueService } from '../services/queue.service.js';
-import { config } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -184,7 +182,7 @@ router.post(
       const jobId = uuidv4();
 
       try {
-        const rustWorkerUrl = `http://localhost:9000`;
+        const rustWorkerUrl = process.env.RUST_WORKER_URL || 'http://localhost:3003';
         const rustResponse = await fetch(`${rustWorkerUrl}/api/clips/generate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -219,6 +217,7 @@ router.post(
             startTime,
             endTime,
             userId: req.user!.userId,
+            clipId: clip.id,
           });
         } catch (queueError) {
           logger.warn({ queueError }, 'Queue unavailable, clip will be processed async');

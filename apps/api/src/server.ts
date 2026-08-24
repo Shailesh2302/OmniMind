@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import dotenv from 'dotenv';
 import fs from 'fs';
 
@@ -20,11 +21,13 @@ import indexRoutes from './routes/index.routes.js';
 import storageRoutes from './routes/storage.routes.js';
 import videoIntelligenceRoutes from './routes/videoIntelligence.routes.js';
 import videoRoutes from './routes/video.routes.js';
+import internalRoutes from './routes/internal.routes.js';
 
 dotenv.config();
 
 const app = express();
 
+app.use(helmet());
 app.use(cors({
   origin: config.corsOrigin,
   credentials: true,
@@ -38,9 +41,13 @@ if (!fs.existsSync('./storage/uploads')) {
 if (!fs.existsSync('./storage/clips')) {
   fs.mkdirSync('./storage/clips', { recursive: true });
 }
+if (!fs.existsSync('./storage/thumbnails')) {
+  fs.mkdirSync('./storage/thumbnails', { recursive: true });
+}
 
 app.use('/storage/uploads', express.static('./storage/uploads'));
 app.use('/storage/clips', express.static('./storage/clips'));
+app.use('/storage/thumbnails', express.static('./storage/thumbnails'));
 
 app.get('/api/health', (req, res) => {
   res.json({
@@ -87,7 +94,11 @@ app.get('/api/health/detailed', async (req, res) => {
     health.qdrant.status = 'unavailable';
   }
 
-  const allHealthy = health.database.status === 'ok' && health.api.status === 'ok';
+  const allHealthy =
+    health.database.status === 'ok' &&
+    health.redis.status === 'ok' &&
+    health.aiService.status === 'ok' &&
+    health.qdrant.status === 'ok';
   res.status(allHealthy ? 200 : 503).json(health);
 });
 
@@ -102,11 +113,17 @@ app.use('/api/index', indexRoutes);
 app.use('/storage', storageRoutes);
 app.use('/api/video', videoIntelligenceRoutes);
 app.use('/api/video-features', videoRoutes);
+app.use('/api/internal', internalRoutes);
 
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   logger.error({ err, path: req.path }, 'Unhandled error');
+  const isClientError = err.status && err.status < 500;
   res.status(err.status || 500).json({
-    error: err.message || 'Internal server error',
+    error: isClientError
+      ? err.message
+      : config.nodeEnv === 'production'
+        ? 'Internal server error'
+        : err.message || 'Internal server error',
   });
 });
 
@@ -115,10 +132,59 @@ async function startServer() {
     await connectDatabase();
     logger.info('Database connected');
 
-    app.listen(config.port, () => {
+    // Auto-recovery: files left in PROCESSING/PENDING by a previous crash
+    // get requeued so they never stay stuck forever.
+    try {
+      const cutoff = new Date(Date.now() - 2 * 60 * 1000); // ignore fresh uploads
+      const stale = await prisma.file.findMany({
+        where: { status: { in: ['PROCESSING', 'PENDING'] }, createdAt: { lt: cutoff } },
+        select: { id: true, path: true, mimeType: true, userId: true },
+      });
+      for (const f of stale) {
+        const isMedia = f.mimeType.startsWith('video/') || f.mimeType.startsWith('audio/');
+        if (isMedia) {
+          await queueService.addVideoProcessingJob({
+            fileId: f.id,
+            filePath: f.path,
+            mimeType: f.mimeType,
+            userId: f.userId,
+          });
+        } else {
+          await queueService.addDocumentProcessingJob({
+            fileId: f.id,
+            filePath: f.path,
+            mimeType: f.mimeType,
+            userId: f.userId,
+          });
+        }
+        await prisma.file.update({ where: { id: f.id }, data: { status: 'PENDING' } }).catch(() => undefined);
+      }
+      if (stale.length > 0) logger.info({ recovered: stale.length }, 'Requeued stale files from previous run');
+    } catch (recoverErr) {
+      logger.warn({ recoverErr }, 'Stale-file recovery scan failed');
+    }
+
+    const server = app.listen(config.port, () => {
       logger.info(`🚀 Aether API running on http://localhost:${config.port}`);
       logger.info(`📚 Health check: http://localhost:${config.port}/api/health`);
     });
+
+    const shutdown = async (signal: string) => {
+      logger.info(`${signal} received, shutting down gracefully`);
+      server.close(async () => {
+        try {
+          await prisma.$disconnect();
+          await queueService.disconnect();
+        } catch (error) {
+          logger.warn({ error }, 'Error during shutdown cleanup');
+        }
+        process.exit(0);
+      });
+      setTimeout(() => process.exit(1), 10_000).unref();
+    };
+
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
   } catch (error) {
     logger.error({ error }, 'Failed to start server');
     process.exit(1);

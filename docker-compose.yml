@@ -1,7 +1,20 @@
 version: '3.8'
 
 services:
-  # Infrastructure Services (using cloud services)
+  redis:
+    image: redis:7-alpine
+    container_name: aether-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aether-network
+
   qdrant:
     image: qdrant/qdrant:v1.7.4
     container_name: aether-qdrant
@@ -49,6 +62,8 @@ services:
     depends_on:
       qdrant:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./apps/api:/app
       - uploads:/app/storage/uploads
@@ -93,14 +108,20 @@ services:
     environment:
       - RUST_LOG=info
       - REDIS_URL=${REDIS_URL}
-      - REDIS_HOST=${REDIS_HOST:-redis}
-      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - API_URL=http://api:3001
+      - AI_SERVICE_URL=http://ai-service:3002
+      - SERVICE_API_KEY=${SERVICE_API_KEY}
+      - STORAGE_BASE_PATH=/tmp/aether
+    depends_on:
+      - api
+      - ai-service
     volumes:
-      - ./apps/rust-worker:/app
       - video_uploads:/tmp/aether
     networks:
       - aether-network
-    command: cargo run --release
+    command: /usr/local/bin/aether-rust-worker
 
   web:
     build:

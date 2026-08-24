@@ -3,117 +3,108 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@/hooks/useAuth";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Loader2, Mail, Lock, Eye, EyeOff } from "lucide-react";
+import { useAuthStore } from "@/store/useAuthStore";
+import { Spinner } from "@/components/ui/spinner";
 
 export default function LoginPage() {
+  const router = useRouter();
+  const login = useAuthStore((s) => s.login);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const { login, error, isLoading, clearError } = useAuth();
-  const router = useRouter();
+  const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    clearError();
+    setError("");
+    setIsLoading(true);
     try {
       await login(email, password);
       router.push("/dashboard");
-    } catch {
-      // error is in store
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Login failed");
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Welcome back</CardTitle>
-        <CardDescription>
-          Sign in to your Aether account to continue
-        </CardDescription>
-      </CardHeader>
-      <form onSubmit={handleSubmit}>
-        <CardContent className="space-y-4">
+    <div className="relative flex min-h-screen items-center justify-center px-5">
+      {/* Watermark */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 select-none font-display text-[24vw] font-bold leading-none outline-text">
+          Æ
+        </div>
+      </div>
+
+      <div className="reveal w-full max-w-sm">
+        <div className="mb-8 flex items-center justify-between hairline-b pb-6">
+          <Link href="/" className="flex items-center gap-3">
+            <span className="grid h-7 w-7 place-items-center bg-lime-300 font-display text-xs font-bold text-black">Æ</span>
+            <span className="font-display text-sm font-bold tracking-[0.22em]">AETHER</span>
+          </Link>
+          <span className="mono-label">AUTH / LOGIN</span>
+        </div>
+
+        <h1 className="font-display text-3xl font-bold tracking-tight">
+          Welcome back<span className="lime-text">.</span>
+        </h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Your knowledge engine is waiting.
+        </p>
+
+        <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+          <div className="space-y-2">
+            <label htmlFor="email" className="mono-label">Email</label>
+            <input
+              id="email"
+              type="email"
+              required
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="h-11 w-full border border-border bg-secondary/50 px-3.5 font-mono text-sm outline-none transition focus:border-lime-300/60 focus:bg-secondary"
+            />
+          </div>
+          <div className="space-y-2">
+            <label htmlFor="password" className="mono-label">Password</label>
+            <input
+              id="password"
+              type="password"
+              required
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="h-11 w-full border border-border bg-secondary/50 px-3.5 font-mono text-sm outline-none transition focus:border-lime-300/60 focus:bg-secondary"
+            />
+          </div>
+
           {error && (
-            <div
-              role="alert"
-              className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-            >
-              {error}
-            </div>
+            <div className="pill pill-err w-fit">{error}</div>
           )}
-          <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
-            <div className="relative">
-              <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                id="email"
-                type="email"
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                className="pl-9"
-                required
-              />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
-            <div className="relative">
-              <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                id="password"
-                type={showPassword ? "text" : "password"}
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="pl-9 pr-9"
-                required
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword((v) => !v)}
-                className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-                aria-label={showPassword ? "Hide password" : "Show password"}
-              >
-                {showPassword ? (
-                  <EyeOff className="h-4 w-4" />
-                ) : (
-                  <Eye className="h-4 w-4" />
-                )}
-              </button>
-            </div>
-          </div>
-        </CardContent>
-        <CardFooter className="flex flex-col gap-4">
-          <Button type="submit" className="w-full" disabled={isLoading}>
-            {isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-            {isLoading ? "Signing in…" : "Sign in"}
-          </Button>
-          <p className="text-center text-sm text-muted-foreground">
-            Don&apos;t have an account?{" "}
-            <Link
-              href="/register"
-              className="font-medium text-primary hover:underline"
-            >
-              Create one
-            </Link>
-          </p>
-        </CardFooter>
-      </form>
-    </Card>
+
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="btn-lime h-11 w-full text-xs uppercase tracking-[0.15em] disabled:opacity-60"
+          >
+            {isLoading ? (
+              <>
+                <Spinner className="h-4 w-4" /> Authenticating
+              </>
+            ) : (
+              "Sign in →"
+            )}
+          </button>
+        </form>
+
+        <p className="mt-8 flex items-center justify-between text-sm text-muted-foreground">
+          <span>No account?</span>
+          <Link href="/register" className="lime-text font-medium hover:underline">
+            Create one free →
+          </Link>
+        </p>
+      </div>
+    </div>
   );
 }

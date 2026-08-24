@@ -14,32 +14,36 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Resolve repo root regardless of caller CWD
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Start services in background
 start_services() {
     # Start Web (Next.js)
     echo -e "${GREEN}[1/4]${NC} Starting Web (Next.js)..."
-    cd /home/shailesh/Desktop/aether/apps/web
+    cd "$ROOT/apps/web"
     pnpm run dev > /tmp/aether-web.log 2>&1 &
     WEB_PID=$!
     echo "Web PID: $WEB_PID"
 
     # Start API (Node.js)
     echo -e "${GREEN}[2/4]${NC} Starting API (Node.js)..."
-    cd /home/shailesh/Desktop/aether/apps/api
+    cd "$ROOT/apps/api"
     pnpm run dev > /tmp/aether-api.log 2>&1 &
     API_PID=$!
     echo "API PID: $API_PID"
 
     # Start AI Service (Python)
     echo -e "${GREEN}[3/4]${NC} Starting AI Service (Python)..."
-    cd /home/shailesh/Desktop/aether/apps/ai-service
-    python -m uvicorn app.main:app --host 0.0.0.0 --port 3002 --reload > /tmp/aether-ai.log 2>&1 &
+    cd "$ROOT/apps/ai-service"
+    if [ -x "./venv/bin/python" ]; then PY=./venv/bin/python; else PY=python; fi
+    $PY -m uvicorn app.main:app --host 0.0.0.0 --port 3002 --reload > /tmp/aether-ai.log 2>&1 &
     AI_PID=$!
     echo "AI PID: $AI_PID"
 
     # Start Rust Worker
     echo -e "${GREEN}[4/4]${NC} Starting Rust Worker..."
-    cd /home/shailesh/Desktop/aether/apps/rust-worker
+    cd "$ROOT/apps/rust-worker"
     cargo run --release > /tmp/aether-rust.log 2>&1 &
     RUST_PID=$!
     echo "Rust PID: $RUST_PID"
@@ -82,6 +86,9 @@ show_logs() {
     echo ""
     echo "=== AI Logs ==="
     tail -20 /tmp/aether-ai.log 2>/dev/null || echo "No logs yet"
+    echo ""
+    echo "=== Rust Worker Logs ==="
+    tail -20 /tmp/aether-rust.log 2>/dev/null || echo "No logs yet"
 }
 
 # Main command

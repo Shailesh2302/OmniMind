@@ -48,11 +48,16 @@ class RAGService:
 
             filter_conditions = {"file_id": file_id} if file_id else None
 
+            # When the caller pins a specific file, fetch its best chunks
+            # regardless of similarity (transcripts may be in another language
+            # than the query). Only open-ended cross-file searches filter.
+            score_threshold = 0.0 if file_id else 0.3
+
             results = await vector_service.search(
                 collection_name=collection,
                 query_embedding=query_embedding,
                 limit=limit,
-                score_threshold=0.3,
+                score_threshold=score_threshold,
                 filter_conditions=filter_conditions,
             )
 
@@ -115,7 +120,7 @@ class RAGService:
         try:
             exists = await vector_service.collection_exists(collection)
             if not exists:
-                await vector_service.create_collection(collection, 4096)
+                await vector_service.create_collection(collection, settings.EMBEDDING_DIMENSION)
 
             chunks = self._chunk_text(text, chunk_size=settings.CHUNK_SIZE, overlap=settings.CHUNK_OVERLAP)
 
@@ -144,49 +149,24 @@ class RAGService:
 
     async def delete_document(self, collection: str, document_id: str) -> bool:
         try:
-            results = await vector_service.search(
-                collection_name=collection,
-                query_embedding=[0] * 4096,
-                limit=1000,
-            )
-
-            ids_to_delete = [
-                result["id"]
-                for result in results
-                if result.get("payload", {}).get("document_id") == document_id
-            ]
-
-            if ids_to_delete:
-                await vector_service.delete_points(collection, ids_to_delete)
-
-            app_logger.info(f"Deleted {len(ids_to_delete)} chunks for document {document_id}")
+            await vector_service.delete_by_filter(collection, {"document_id": document_id})
+            app_logger.info(f"Deleted chunks for document {document_id}")
             return True
         except Exception as e:
             app_logger.error(f"Error deleting document: {e}")
             return False
 
     async def delete_file(self, user_id: str, file_id: str) -> bool:
-        collection = f"user_{user_id}"
+        collection = f"user_{user_id}".replace("-", "_")
         app_logger.info(f"Deleting all chunks for file: {file_id} in collection: {collection}")
 
         try:
-            query_embedding = await embedding_service.embed_query("placeholder query to get all")
-            results = await vector_service.search(
-                collection_name=collection,
-                query_embedding=query_embedding,
-                limit=1000,
-            )
-
-            ids_to_delete = [
-                result["id"]
-                for result in results
-                if result.get("payload", {}).get("file_id") == file_id
-            ]
-
-            if ids_to_delete:
-                await vector_service.delete_points(collection, ids_to_delete)
-
-            app_logger.info(f"Deleted {len(ids_to_delete)} chunks for file {file_id}")
+            exists = await vector_service.collection_exists(collection)
+            if not exists:
+                app_logger.warning(f"Collection does not exist: {collection}")
+                return True
+            await vector_service.delete_by_filter(collection, {"file_id": file_id})
+            app_logger.info(f"Deleted chunks for file {file_id}")
             return True
         except Exception as e:
             app_logger.error(f"Error deleting file: {e}")

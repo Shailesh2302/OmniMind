@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
+import { randomUUID } from 'crypto';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import { aiService } from '../services/ai.service.js';
 import { vectorService } from '../services/vector.service.js';
@@ -16,58 +17,70 @@ const validateRequest = (req: Request, res: Response, next: NextFunction) => {
   next();
 };
 
+async function semanticSearch(
+  userId: string,
+  query: string,
+  limit: number
+): Promise<{ results: unknown[]; query: string; message?: string }> {
+  const userFiles = await prisma.file.findMany({
+    where: { userId, status: 'COMPLETED' },
+    select: { id: true, name: true, originalName: true, mimeType: true },
+  });
+
+  if (userFiles.length === 0) {
+    return { results: [], query, message: 'No indexed files found' };
+  }
+
+  const collectionName = `user_${userId}`.replace(/-/g, '_');
+
+  try {
+    const queryEmbedding = await aiService.createEmbedding(query);
+
+    const results = await vectorService.searchPoints(
+      collectionName,
+      queryEmbedding,
+      limit
+    );
+
+    return {
+      results: results.map((r) => ({
+        id: r.id,
+        text: r.payload.text,
+        score: r.score,
+        metadata: r.payload.metadata || {},
+      })),
+      query,
+    };
+  } catch (error) {
+    logger.warn({ err: error instanceof Error ? error.message : String(error) }, 'Vector search failed, falling back to AI answer');
+
+    const aiResponse = await aiService.searchDocuments(query);
+    return {
+      results: [{
+        id: 'ai-generated',
+        text: aiResponse,
+        score: 1.0,
+        metadata: { source: 'ai' },
+      }],
+      query,
+    };
+  }
+}
+
 router.get(
   '/',
   authenticate,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const { q, limit = 10 } = req.query;
-      const userId = req.user!.userId;
+      const q = req.query.q as string | undefined;
+      const limit = parseInt(String(req.query.limit || '10'), 10);
 
-      if (!q || typeof q !== 'string') {
+      if (!q) {
         return res.json({ results: [], message: 'No query provided' });
       }
 
-      const userFiles = await prisma.file.findMany({
-        where: { userId, status: 'COMPLETED' },
-        select: { id: true, name: true, originalName: true, mimeType: true },
-      });
-
-      if (userFiles.length === 0) {
-        return res.json({ results: [], message: 'No indexed files found' });
-      }
-
-      const collectionName = `user_${userId}`.replace(/-/g, '_');
-      
-      let results: any[] = [];
-      try {
-        const queryEmbedding = await aiService.createEmbedding(q);
-        
-        results = await vectorService.searchPoints(
-          collectionName,
-          queryEmbedding,
-          parseInt(String(limit), 10)
-        );
-
-        results = results.map((r) => ({
-          id: r.id,
-          text: r.payload.text,
-          score: r.score,
-          metadata: r.payload.metadata || {},
-        }));
-      } catch (error) {
-        logger.warn({ error }, 'Vector search failed, falling back to AI search');
-        
-        const aiResponse = await aiService.searchDocuments(q);
-        results = [{
-          id: 'ai-generated',
-          text: aiResponse,
-          score: 1.0,
-          metadata: { source: 'ai' },
-        }];
-      }
-
-      res.json({ results, query: q });
+      const result = await semanticSearch(req.user!.userId, q, limit);
+      res.json(result);
     } catch (error) {
       next(error);
     }
@@ -84,48 +97,12 @@ router.post(
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const { query, limit = 10 } = req.body;
-      const userId = req.user!.userId;
-
-      const userFiles = await prisma.file.findMany({
-        where: { userId, status: 'COMPLETED' },
-        select: { id: true, name: true, originalName: true, mimeType: true },
-      });
-
-      if (userFiles.length === 0) {
-        return res.json({ results: [], message: 'No indexed files found' });
-      }
-
-      const collectionName = `user_${userId}`.replace(/-/g, '_');
-      
-      let results: any[] = [];
-      try {
-        const queryEmbedding = await aiService.createEmbedding(query);
-        
-        results = await vectorService.searchPoints(
-          collectionName,
-          queryEmbedding,
-          parseInt(String(limit), 10)
-        );
-
-        results = results.map((r) => ({
-          id: r.id,
-          text: r.payload.text,
-          score: r.score,
-          metadata: r.payload.metadata || {},
-        }));
-      } catch (error) {
-        logger.warn({ error }, 'Vector search failed');
-
-        const aiResponse = await aiService.searchDocuments(query);
-        results = [{
-          id: 'ai-generated',
-          text: aiResponse,
-          score: 1.0,
-          metadata: { source: 'ai' },
-        }];
-      }
-
-      res.json({ results, query });
+      const result = await semanticSearch(
+        req.user!.userId,
+        query,
+        parseInt(String(limit), 10)
+      );
+      res.json(result);
     } catch (error) {
       next(error);
     }
@@ -154,23 +131,43 @@ router.post(
       }
 
       const collectionName = `user_${userId}`.replace(/-/g, '_');
-      
-      const collectionExists = await vectorService.collectionExists(collectionName);
-      if (!collectionExists) {
-        await vectorService.createCollection(collectionName, 1536);
-      }
 
       const chunks = text.split('\n\n').filter((chunk: string) => chunk.trim());
-      
-      for (const chunk of chunks) {
+
+      if (chunks.length === 0) {
+        return res.status(400).json({ error: 'No valid chunks to index' });
+      }
+
+      const firstEmbedding = await aiService.createEmbedding(chunks[0]);
+      const dimension = firstEmbedding.length;
+
+      const collectionExists = await vectorService.collectionExists(collectionName);
+      if (!collectionExists) {
+        await vectorService.createCollection(collectionName, dimension);
+      }
+
+      await vectorService.upsertPoints(collectionName, [{
+        id: randomUUID(),
+        vector: firstEmbedding,
+        payload: {
+          text: chunks[0],
+          file_id: fileId,
+          user_id: userId,
+          fileName: file.originalName,
+          ...metadata,
+        },
+      }]);
+
+      for (const chunk of chunks.slice(1)) {
         const embedding = await aiService.createEmbedding(chunk);
-        
+
         await vectorService.upsertPoints(collectionName, [{
-          id: `${fileId}:${Date.now()}:${Math.random()}`,
+          id: randomUUID(),
           vector: embedding,
           payload: {
             text: chunk,
-            fileId,
+            file_id: fileId,
+            user_id: userId,
             fileName: file.originalName,
             ...metadata,
           },

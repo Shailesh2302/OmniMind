@@ -1,6 +1,5 @@
-import { Router, Request, Response, NextFunction } from 'express';
+import { Router, Response, NextFunction } from 'express';
 import multer from 'multer';
-import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import { prisma } from '../config/db.js';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
@@ -21,12 +20,18 @@ const fileFilter = (req: Express.Request, file: Express.Multer.File, cb: multer.
     'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     'video/mp4',
     'video/webm',
-    'video/avi',
+    'video/x-msvideo',
+    'video/x-matroska',
     'video/quicktime',
     'audio/mpeg',
     'audio/wav',
-    'audio/mp3',
+    'audio/wave',
+    'audio/x-wav',
     'audio/ogg',
+    'audio/webm',
+    'text/plain',
+    'text/markdown',
+    'text/csv',
   ];
 
   if (allowedMimeTypes.includes(file.mimetype)) {
@@ -44,6 +49,139 @@ const upload = multer({
   fileFilter,
 });
 
+interface UploadedFileInfo {
+  id: string;
+  name: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  status: string;
+  url: string | null;
+  createdAt: Date;
+}
+
+const DOCUMENT_MIMES = new Set([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+]);
+
+/**
+ * Shared post-upload pipeline:
+ *   video/audio -> enqueue to aether:video:queue (Rust worker transcribes + indexes)
+ *   documents   -> index directly via AI service
+ */
+async function processUploadedFile(
+  userId: string,
+  originalName: string,
+  mimeType: string,
+  size: number,
+  buffer: Buffer
+): Promise<UploadedFileInfo> {
+  const storageResult = await storageService.saveFile(buffer, originalName);
+
+  const dbFile = await prisma.file.create({
+    data: {
+      userId,
+      name: path.basename(storageResult.path),
+      originalName,
+      mimeType,
+      size: Number(BigInt(size)),
+      path: storageResult.path,
+      url: storageResult.url,
+      status: 'PENDING',
+    },
+  });
+
+  try {
+    if (mimeType.startsWith('video/') || mimeType.startsWith('audio/')) {
+      await queueService.addVideoProcessingJob({
+        fileId: dbFile.id,
+        filePath: storageResult.path,
+        mimeType,
+        userId,
+      });
+      await prisma.file.update({
+        where: { id: dbFile.id },
+        data: { status: 'PROCESSING' },
+      });
+    } else if (DOCUMENT_MIMES.has(mimeType)) {
+      await prisma.file.update({
+        where: { id: dbFile.id },
+        data: { status: 'PROCESSING' },
+      });
+
+      // Index in the background so uploads return instantly.
+      // The file's DB row is updated when indexing finishes.
+      void indexDocumentInBackground(dbFile.id, storageResult.path, mimeType, userId).catch((err) => {
+        logger.error({ err, fileId: dbFile.id }, 'Background indexing crashed');
+      });
+    }
+  } catch (err) {
+    logger.error({ err, fileId: dbFile.id }, 'Post-upload processing failed');
+    await prisma.file.update({
+      where: { id: dbFile.id },
+      data: { status: 'FAILED' },
+    }).catch(() => undefined);
+  }
+
+  const finalFile = await prisma.file.findUnique({
+    where: { id: dbFile.id },
+  });
+
+  return {
+    id: dbFile.id,
+    name: dbFile.name,
+    originalName: dbFile.originalName,
+    mimeType: dbFile.mimeType,
+    size: Number(dbFile.size),
+    status: finalFile?.status || dbFile.status,
+    url: dbFile.url,
+    createdAt: dbFile.createdAt,
+  };
+}
+
+
+/**
+ * Background document indexing - never blocks the upload response.
+ */
+async function indexDocumentInBackground(
+  fileId: string,
+  filePath: string,
+  mimeType: string,
+  userId: string
+): Promise<void> {
+  try {
+    const aiResponse = await fetch(`${config.aiServiceUrl}/api/v1/documents/index`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_id: fileId,
+        file_path: path.resolve(filePath),
+        mime_type: mimeType,
+        user_id: userId,
+      }),
+    });
+    if (aiResponse.ok) {
+      logger.info({ fileId }, 'Background indexing finished');
+      await prisma.file.update({ where: { id: fileId }, data: { status: 'COMPLETED' } });
+    } else {
+      throw new Error(`AI service returned ${aiResponse.status}`);
+    }
+  } catch (indexError) {
+    logger.warn({ indexError, fileId }, 'Direct indexing failed, enqueuing for worker');
+    await queueService.addDocumentProcessingJob({
+      fileId,
+      filePath,
+      mimeType,
+      userId,
+    }).catch(() => undefined);
+  }
+}
+
 router.post(
   '/',
   authenticate,
@@ -54,123 +192,17 @@ router.post(
         return res.status(400).json({ error: 'No file uploaded' });
       }
 
-      const originalName = req.file.originalname;
-      const mimeType = req.file.mimetype;
-      const size = req.file.size;
+      const fileInfo = await processUploadedFile(
+        req.user!.userId,
+        req.file.originalname,
+        req.file.mimetype,
+        req.file.size,
+        req.file.buffer
+      );
 
-      const storageResult = await storageService.saveFile(req.file.buffer, originalName);
+      logger.info({ fileId: fileInfo.id, userId: req.user!.userId, mimeType: fileInfo.mimeType }, 'File uploaded');
 
-      const file = await prisma.file.create({
-        data: {
-          userId: req.user!.userId,
-          name: storageResult.path.split('/').pop() || originalName,
-          originalName,
-          mimeType,
-          size: Number(BigInt(size)),
-          path: storageResult.path,
-          url: storageResult.url,
-          status: 'PENDING',
-        },
-      });
-
-      const isVideo = mimeType.startsWith('video/');
-      const isAudio = mimeType.startsWith('audio/');
-      const isDocument = 
-        mimeType === 'application/pdf' ||
-        mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-        mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-
-      if (isVideo || isAudio) {
-        await queueService.addVideoProcessingJob({
-          fileId: file.id,
-          filePath: storageResult.path,
-          mimeType,
-          userId: req.user!.userId,
-        });
-
-        await prisma.file.update({
-          where: { id: file.id },
-          data: { status: 'PENDING' as any },
-        });
-
-        try {
-          const absolutePath = path.resolve(config.storage.uploadDir, storageResult.path.split('/').pop() || '');
-          const aiResponse = await fetch(`${config.aiServiceUrl}/api/v1/documents/index`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              file_id: file.id,
-              file_path: absolutePath,
-              mime_type: mimeType,
-              user_id: req.user!.userId,
-            }),
-          });
-          if (aiResponse.ok) {
-            logger.info({ fileId: file.id }, 'AI indexing triggered successfully');
-            await prisma.file.update({
-              where: { id: file.id },
-              data: { status: 'COMPLETED' as any },
-            });
-          }
-        } catch (err) {
-          logger.warn({ err }, 'AI indexing failed, will process via queue');
-        }
-      } else if (isDocument) {
-        await queueService.addDocumentProcessingJob({
-          fileId: file.id,
-          filePath: storageResult.path,
-          mimeType,
-          userId: req.user!.userId,
-        });
-
-        await prisma.file.update({
-          where: { id: file.id },
-          data: { status: 'PENDING' as any },
-        });
-
-        try {
-          const absolutePath = path.resolve(config.storage.uploadDir, storageResult.path.split('/').pop() || '');
-          const aiResponse = await fetch(`${config.aiServiceUrl}/api/v1/documents/index`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              file_id: file.id,
-              file_path: absolutePath,
-              mime_type: mimeType,
-              user_id: req.user!.userId,
-            }),
-          });
-          if (aiResponse.ok) {
-            logger.info({ fileId: file.id }, 'AI indexing triggered successfully');
-            await prisma.file.update({
-              where: { id: file.id },
-              data: { status: 'COMPLETED' as any },
-            });
-          }
-        } catch (err) {
-          logger.warn({ err }, 'AI indexing failed, will process via queue');
-        }
-      }
-
-      logger.info({
-        fileId: file.id,
-        userId: req.user!.userId,
-        mimeType,
-        size,
-      }, 'File uploaded successfully');
-
-      res.status(201).json({
-        file: {
-          id: file.id,
-          name: file.name,
-          originalName: file.originalName,
-          mimeType: file.mimeType,
-          size: Number(file.size),
-          status: file.status,
-          url: file.url,
-          createdAt: file.createdAt,
-        },
-      });
+      res.status(201).json({ file: fileInfo });
     } catch (error) {
       next(error);
     }
@@ -187,74 +219,18 @@ router.post(
         return res.status(400).json({ error: 'No files uploaded' });
       }
 
-      const results = await Promise.all(
-        req.files.map(async (file) => {
-          const originalName = file.originalname;
-          const mimeType = file.mimetype;
-          const bufferSize = file.size;
+      const results: UploadedFileInfo[] = [];
+      for (const file of req.files) {
+        results.push(await processUploadedFile(
+          req.user!.userId,
+          file.originalname,
+          file.mimetype,
+          file.size,
+          file.buffer
+        ));
+      }
 
-          const storageResult = await storageService.saveFile(file.buffer, originalName);
-
-          const dbFile = await prisma.file.create({
-            data: {
-              userId: req.user!.userId,
-              name: storageResult.path.split('/').pop() || originalName,
-              originalName,
-              mimeType,
-              size: Number(BigInt(bufferSize)),
-              path: storageResult.path,
-              url: storageResult.url,
-              status: 'PENDING',
-            },
-          });
-
-          const isMedia = mimeType.startsWith('video/') || mimeType.startsWith('audio/');
-          const isDocument = 
-            mimeType === 'application/pdf' ||
-            mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-            mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-
-          if (isMedia) {
-            await queueService.addVideoProcessingJob({
-              fileId: dbFile.id,
-              filePath: storageResult.path,
-              mimeType,
-              userId: req.user!.userId,
-            });
-            await prisma.file.update({
-              where: { id: dbFile.id },
-              data: { status: 'PENDING' as any },
-            });
-          } else if (isDocument) {
-            await queueService.addDocumentProcessingJob({
-              fileId: dbFile.id,
-              filePath: storageResult.path,
-              mimeType,
-              userId: req.user!.userId,
-            });
-            await prisma.file.update({
-              where: { id: dbFile.id },
-              data: { status: 'PENDING' as any },
-            });
-          }
-
-          return {
-            id: dbFile.id,
-            name: dbFile.name,
-            originalName: dbFile.originalName,
-            mimeType: dbFile.mimeType,
-            size: Number(dbFile.size),
-            status: dbFile.status,
-            url: dbFile.url,
-            createdAt: dbFile.createdAt,
-          };
-        })
-      );
-
-      logger.info({
-        count: results.length,
-        userId: req.user!.userId,
-      }, 'Multiple files uploaded');
+      logger.info({ count: results.length, userId: req.user!.userId }, 'Multiple files uploaded');
 
       res.status(201).json({ files: results });
     } catch (error) {

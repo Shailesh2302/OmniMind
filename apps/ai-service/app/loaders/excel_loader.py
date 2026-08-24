@@ -14,7 +14,7 @@ class ExcelLoader:
             for row in sheet.iter_rows(values_only=True):
                 row_text = " | ".join(str(c) if c is not None else "" for c in row)
                 if row_text.strip():
-                    rows.append(row_text)
+                    rows.append(row_text) # type: ignore
             if rows:
                 sheets.append(f"Sheet: {sheet_name}\n" + "\n".join(rows))
         wb.close()

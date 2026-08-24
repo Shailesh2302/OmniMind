@@ -16,7 +16,7 @@ impl QueueWorker {
 
     async fn update_job_status(&self, job_id: &str, status: &str) {
         if let Err(e) = self.app_state.redis.hset(
-            &format!("job:{}", job_id),
+            &format!("aether:job:{}", job_id),
             "status",
             status,
         ).await {

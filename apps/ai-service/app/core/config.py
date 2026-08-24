@@ -11,17 +11,19 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
 
     NVIDIA_API_KEY: str = ""
-    NVIDIA_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
-    NVIDIA_CHAT_MODEL: str = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
-    NVIDIA_EMBEDDING_MODEL: str = "nvidia/nv-embed-v1"
+    NVIDIA_BASE_URL: str = "https://openrouter.ai/api/v1"
+    NVIDIA_CHAT_MODEL: str = "stealth/ox-alpha"
+    NVIDIA_EMBEDDING_MODEL: str = "openai/text-embedding-3-small"
+    EMBEDDING_DIMENSION: int = 1536
+    LLM_MAX_TOKENS: int = 2048
+    LLM_TIMEOUT_SECONDS: float = 180.0
+    LLM_REASONING_EFFORT: str = "low"
     
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = 6333
     QDRANT_GRPC_PORT: int = 6334
-    QDRANT_COLLECTION: str = "aether"
     QDRANT_API_KEY: str = ""
 
-    SENTENCE_TRANSFORMER_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     WHISPER_MODEL: str = "base"
     WHISPER_DEVICE: str = "cpu"
@@ -29,7 +31,6 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 500
     CHUNK_OVERLAP: int = 100
 
-    MAX_CHUNK_LENGTH: int = 8192
 
     SECURITY_API_KEY: Optional[str] = None
     SECURITY_ENABLED: bool = False

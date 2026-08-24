@@ -2,8 +2,15 @@ import { Router, Response, NextFunction } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import { config } from '../config/env.js';
 import { logger } from '../config/logger.js';
+import { prisma } from '../config/db.js';
 
 const router = Router();
+
+const requireOwnedFile = async (fileId: unknown, userId: string): Promise<boolean> => {
+  if (!fileId || typeof fileId !== 'string') return false;
+  const file = await prisma.file.findFirst({ where: { id: fileId, userId }, select: { id: true } });
+  return Boolean(file);
+};
 
 router.post(
   '/summary',
@@ -12,6 +19,10 @@ router.post(
     try {
       const { fileId } = req.body;
       const userId = req.user!.userId;
+
+      if (!(await requireOwnedFile(fileId, userId))) {
+        return res.status(404).json({ error: 'File not found' });
+      }
 
       logger.info(`Generating video summary: fileId=${fileId}, userId=${userId}`);
 
@@ -47,6 +58,10 @@ router.post(
 
       if (!fileId || !question) {
         return res.status(400).json({ error: 'fileId and question are required' });
+      }
+
+      if (!(await requireOwnedFile(fileId, userId))) {
+        return res.status(404).json({ error: 'File not found' });
       }
 
       logger.info(`Processing video question: fileId=${fileId}`);
@@ -107,6 +122,10 @@ router.get(
       const { fileId } = req.params;
       const userId = req.user!.userId;
 
+      if (!(await requireOwnedFile(fileId, userId))) {
+        return res.status(404).json({ error: 'File not found' });
+      }
+
       const response = await fetch(
         `${config.aiServiceUrl}/api/v1/status?file_id=${fileId}&user_id=${userId}`,
         { method: 'GET' }
@@ -132,6 +151,10 @@ router.post(
     try {
       const { fileId, maxClips = 5 } = req.body;
       const userId = req.user!.userId;
+
+      if (!(await requireOwnedFile(fileId, userId))) {
+        return res.status(404).json({ error: 'File not found' });
+      }
 
       logger.info(`Generating smart clips: fileId=${fileId}, maxClips=${maxClips}`);
 

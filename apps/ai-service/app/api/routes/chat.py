@@ -1,16 +1,18 @@
-from typing import Optional, List
-import asyncio
+from typing import Optional
+import json
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.api.dependencies import API_KEY_DEP
-from app.core.logger import app_logger
-from app.schemas.chat import ChatRequest, ChatResponse, StreamChatRequest, Source
-from app.services.rag_service import RAGService, Source as RAGSource
-from app.services.llm_service import LLMService
+from app.schemas.chat import ChatRequest, ChatResponse, StreamChatRequest
+from app.services.rag_service import rag_service as rag_service_singleton
+from app.services.llm_service import llm_service as llm_service_singleton
 
 router = APIRouter(tags=["chat"])
+
+RAG_SERVICE = rag_service_singleton
+LLM_SERVICE = llm_service_singleton
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -20,14 +22,11 @@ async def chat(
     file_id: Optional[str] = Query(None, description="Specific file ID to search within"),
     api_key: API_KEY_DEP = None,
 ) -> ChatResponse:
-    rag_service = RAGService()
-    llm_service = LLMService()
-
     sources = []
     context = ""
 
     if user_id:
-        rag_context = await rag_service.get_relevant_context(
+        rag_context = await RAG_SERVICE.get_relevant_context(
             query=request.message,
             user_id=user_id,
             collection=request.collection,
@@ -56,7 +55,7 @@ async def chat(
     else:
         enhanced_system = base_system
 
-    response = await llm_service.generate_response(
+    response = await LLM_SERVICE.generate_response(
         query=request.message,
         context=context,
         system_prompt=enhanced_system,
@@ -66,7 +65,7 @@ async def chat(
         message=response,
         sources=sources,
         metadata={
-            "collection": request.collection or f"user:{user_id}",
+            "collection": request.collection or f"user_{user_id}".replace("-", "_"),
             "file_id": file_id,
             "user_id": user_id,
             "chunks_retrieved": len(sources),
@@ -81,12 +80,9 @@ async def stream_chat(
     file_id: Optional[str] = Query(None, description="Specific file ID to search within"),
     api_key: API_KEY_DEP = None,
 ) -> StreamingResponse:
-    rag_service = RAGService()
-    llm_service = LLMService()
-
     context = ""
     if user_id:
-        rag_context = await rag_service.get_relevant_context(
+        rag_context = await RAG_SERVICE.get_relevant_context(
             query=request.message,
             user_id=user_id,
             collection=request.collection,
@@ -106,13 +102,12 @@ async def stream_chat(
         enhanced_system = base_system
 
     async def generate():
-        async for chunk in llm_service.generate_stream(
+        async for chunk in LLM_SERVICE.generate_stream(
             query=request.message,
             context=context,
             system_prompt=enhanced_system,
         ):
-            yield f"data: {chunk}\n\n"
-            await asyncio.sleep(0.01)
+            yield f"data: {json.dumps({'content': chunk})}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -127,9 +122,7 @@ async def simple_chat(
     request: ChatRequest,
     api_key: API_KEY_DEP = None,
 ) -> ChatResponse:
-    llm_service = LLMService()
-
-    response = await llm_service.generate_response(
+    response = await LLM_SERVICE.generate_response(
         query=request.message,
         context="",
         system_prompt=request.system_prompt,
@@ -148,8 +141,8 @@ async def get_chat_history(
     limit: int = Query(10, ge=1, le=100),
     api_key: API_KEY_DEP = None,
 ) -> dict:
-    return {
-        "user_id": user_id,
-        "history": [],
-        "message": "Chat history not yet implemented",
-    }
+    # Chat history lives in the Node API's Postgres (Session/Message models).
+    raise HTTPException(
+        status_code=501,
+        detail="Chat history is served by the main API at GET /api/chat/sessions",
+    )
